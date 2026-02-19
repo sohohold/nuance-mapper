@@ -63,28 +63,64 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
         </button>
       </div>
 
-      {showAxisSettings && ( // Simple conditional rendering for now, can animate later
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-black/20 backdrop-blur-sm border border-white/10 text-sm animate-in fade-in slide-in-from-top-2">
-          <div className="space-y-2">
-            <label className="block text-white/80">X軸ラベル (横軸)</label>
-            <input
-              type="text"
-              value={xAxis}
-              onChange={(e) => setXAxis(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
-            />
-             <p className="text-xs text-white/40">-10 <span className="mx-1">↔</span> +10</p>
-          </div>
-          <div className="space-y-2">
-            <label className="block text-white/80">Y軸ラベル (縦軸)</label>
-            <input
-              type="text"
-              value={yAxis}
-              onChange={(e) => setYAxis(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
-            />
-            <p className="text-xs text-white/40">-10 <span className="mx-1">↔</span> +10</p>
-          </div>
+      {showAxisSettings && (
+        <div className="space-y-4 p-4 rounded-xl bg-black/20 backdrop-blur-sm border border-white/10 text-sm animate-in fade-in slide-in-from-top-2">
+            
+            {/* Presets List */}
+            <div className="space-y-2">
+                <label className="block text-white/60 text-xs">プリセットから選択</label>
+                <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                    {[
+                        { name: "小説", x: "詩的・叙情的", y: "現実的・日常的" },
+                        { name: "論文", x: "専門的・学術的", y: "一般的・直感的" },
+                        { name: "ビジネス", x: "フォーマル・堅い", y: "カジュアル・親しみやすい" },
+                        { name: "アイデア", x: "実現可能性", y: "新規性・インパクト" },
+                        { name: "感情", x: "ポジティブ", y: "活動的・エネルギッシュ" },
+                        { name: "味覚", x: "甘い・濃厚", y: "さっぱり・酸味" },
+                        { name: "性格", x: "外交的", y: "論理的" },
+                    ].map((preset) => (
+                        <button
+                            key={preset.name}
+                            type="button"
+                            onClick={() => {
+                                setXAxis(preset.x);
+                                setYAxis(preset.y);
+                            }}
+                            className={cn(
+                                "px-3 py-1.5 rounded-full text-xs border whitespace-nowrap transition-all cursor-pointer",
+                                xAxis === preset.x && yAxis === preset.y
+                                    ? "bg-white/20 border-white/40 text-white font-medium" 
+                                    : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:text-white"
+                            )}
+                        >
+                            {preset.name}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-white/10">
+                <div className="space-y-2">
+                    <label className="block text-white/80">X軸ラベル (横軸)</label>
+                    <input
+                    type="text"
+                    value={xAxis}
+                    onChange={(e) => setXAxis(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
+                    />
+                    <p className="text-xs text-white/40">-10 <span className="mx-1">↔</span> +10</p>
+                </div>
+                <div className="space-y-2">
+                    <label className="block text-white/80">Y軸ラベル (縦軸)</label>
+                    <input
+                    type="text"
+                    value={yAxis}
+                    onChange={(e) => setYAxis(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
+                    />
+                    <p className="text-xs text-white/40">-10 <span className="mx-1">↔</span> +10</p>
+                </div>
+            </div>
         </div>
       )}
     </div>
