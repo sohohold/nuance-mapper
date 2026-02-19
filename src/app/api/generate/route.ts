@@ -69,10 +69,12 @@ export async function POST(req: Request) {
     `;
 
     const models = [
+      "openrouter/free",
+      "stepfun/step-3.5-flash:free",
       "arcee-ai/trinity-large-preview:free",
       "z-ai/glm-4.5-air:free",
       "deepseek/deepseek-r1-0528:free",
-      "openai/gpt-oss-120b",
+      "openai/gpt-oss-120b:free",
     ];
 
     let completion: any;
@@ -87,7 +89,7 @@ export async function POST(req: Request) {
             { role: "system", content: "You are a helpful assistant that outputs strictly JSON." },
             { role: "user", content: prompt }
           ],
-          response_format: { type: "json_object" }, 
+          // response_format: { type: "json_object" }, // Many free/reasoning models don't support this
         });
         if (completion) break;
       } catch (e) {
