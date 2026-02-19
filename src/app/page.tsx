@@ -49,7 +49,7 @@ export default function Home() {
         
         {/* Header */}
         <div className="text-center space-y-4">
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/50">
+          <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
             Nuance Mapper
           </h1>
           <p className="text-white/60 text-lg md:text-xl font-light tracking-wide max-w-lg mx-auto">

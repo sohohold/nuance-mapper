@@ -52,10 +52,10 @@ const CustomTooltip = ({ active, payload, allData }: { active?: boolean; payload
                 {displayItems.map((data, idx) => (
                     <div key={`${data.word}-${idx}`} className={cn("flex flex-col gap-1", idx !== 0 && "pt-3 border-t border-slate-100")}>
                         <div className="flex items-center gap-2">
-                             <span className={cn("w-2 h-2 rounded-full flex-shrink-0",
+                             <span className={cn("w-2 h-2 rounded-full shrink-0",
                                 data.x > 0 ? (data.y > 0 ? "bg-pink-400" : "bg-violet-400") : (data.y > 0 ? "bg-emerald-400" : "bg-blue-400")
                             )} />
-                            <p className="font-bold text-lg text-slate-800 leading-none break-words">{data.word}</p>
+                            <p className="font-bold text-lg text-slate-800 leading-none wrap-break-word">{data.word}</p>
                         </div>
                         <p className="text-xs text-slate-600 leading-relaxed font-medium pl-4">{data.nuance}</p>
                     </div>

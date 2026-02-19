@@ -25,20 +25,33 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
   return (
     <div className="w-full max-w-2xl mx-auto space-y-4">
       <form onSubmit={handleSubmit} className="relative group">
-        <div className="flex items-center gap-2 p-2 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl transition-all duration-300 focus-within:bg-white/20 focus-within:border-white/40 focus-within:ring-2 focus-within:ring-white/20">
+        <div className="relative overflow-hidden flex items-center gap-2 p-2 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl transition-all duration-300 focus-within:bg-white/20 focus-within:border-white/40 focus-within:ring-2 focus-within:ring-white/20">
+          {isLoading && (
+            <div className="absolute inset-0 -translate-x-full animate-shimmer bg-linear-to-r from-transparent via-white/10 to-transparent skew-x-[-20deg]" />
+          )}
           <input
             type="text"
             value={word}
             onChange={(e) => setWord(e.target.value)}
+            maxLength={24}
             placeholder="言葉を入力してください (例: すごい)"
-            className="flex-1 bg-transparent px-4 py-3 text-lg text-white placeholder:text-white/50 focus:outline-none"
+            className="flex-1 relative z-10 bg-transparent px-4 py-3 text-lg text-white placeholder:text-white/50 focus:outline-none"
             disabled={isLoading}
           />
+          {isLoading && (
+            <div className="absolute bottom-full right-0 mb-4 w-48 z-50 animate-in fade-in zoom-in slide-in-from-bottom-2 duration-300">
+              <div className="relative bg-[#FFD700] text-indigo-900 text-xs font-bold px-3 py-2 rounded-xl shadow-lg border-2 border-white transform rotate-1">
+                <p>10秒以上かかる場合があります 🐢</p>
+                {/* Arrow */}
+                <div className="absolute -bottom-2 right-4 w-4 h-4 bg-[#FFD700] border-b-2 border-r-2 border-white transform rotate-45"></div>
+              </div>
+            </div>
+          )}
           <button
             type="submit"
             disabled={isLoading || !word.trim()}
             className={cn(
-              "p-3 rounded-xl transition-all duration-300 cursor-pointer",
+              "p-3 rounded-xl transition-all duration-300 cursor-pointer relative z-10",
               isLoading || !word.trim()
                 ? "bg-white/5 text-white/30 cursor-not-allowed"
                 : "bg-white text-indigo-900 hover:bg-white/90 hover:scale-105 active:scale-95 shadow-lg"
