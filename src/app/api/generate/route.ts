@@ -31,23 +31,25 @@ export async function POST(req: Request) {
       // },
     });
 
+    const AXIS_MAX_VAL = 10;
+
     const prompt = `
       # Role
       あなたは高度な日本語の語彙力を持つ「ニュアンス・マッパー」です。
       入力された単語「${word}」に対し、意味が近い類語（言い換え表現）を20個生成し、それぞれのニュアンスを以下の2軸で評価して出力してください。
 
       # Axes Definition (座標軸の定義)
-      各単語を以下の基準で -10 から +10 の数値で採点してください。
+      各単語を以下の基準で -${AXIS_MAX_VAL} から +${AXIS_MAX_VAL} の数値で採点してください。
 
       ## X軸: ${xAxis}
-      -10: ${xAxis}が最も低い/反対の性質。
+      -${AXIS_MAX_VAL}: ${xAxis}が最も低い/反対の性質。
         0: 中立。
-      +10: ${xAxis}が最も高い/強い性質。
+      +${AXIS_MAX_VAL}: ${xAxis}が最も高い/強い性質。
 
       ## Y軸: ${yAxis}
-      -10: ${yAxis}が最も低い/反対の性質。
+      -${AXIS_MAX_VAL}: ${yAxis}が最も低い/反対の性質。
         0: 中立。
-      +10: ${yAxis}が最も高い/強い性質。
+      +${AXIS_MAX_VAL}: ${yAxis}が最も高い/強い性質。
 
       # Output Format (出力形式)
       結果は必ず **JSON形式のみ** で出力してください。Markdownのコードブロックは不要です。
@@ -56,8 +58,8 @@ export async function POST(req: Request) {
       [
         {
           "word": "単語",
-          "x": 数値(-10〜10),
-          "y": 数値(-10〜10),
+          "x": 数値(-${AXIS_MAX_VAL}〜${AXIS_MAX_VAL}),
+          "y": 数値(-${AXIS_MAX_VAL}〜${AXIS_MAX_VAL}),
           "nuance": "その言葉が持つ微細なニュアンスの短い解説（20文字以内）"
         },
         ...
@@ -69,8 +71,8 @@ export async function POST(req: Request) {
     `;
 
     const models = [
-      "openrouter/free",
       "stepfun/step-3.5-flash:free",
+      "openrouter/free",
       "arcee-ai/trinity-large-preview:free",
       "z-ai/glm-4.5-air:free",
       "deepseek/deepseek-r1-0528:free",

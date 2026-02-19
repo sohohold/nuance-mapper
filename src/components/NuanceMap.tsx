@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   ScatterChart,
   Scatter,
@@ -73,35 +73,74 @@ const CustomTooltip = ({ active, payload, allData }: { active?: boolean; payload
 };
 
 export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
-  const [xDomain, setXDomain] = useState<[number, number]>([-10, 10]);
-  const [yDomain, setYDomain] = useState<[number, number]>([-10, 10]);
+  // Calculate dynamic limit based on data max value + 2 buffer
+  const limit = useMemo(() => {
+    if (!data || data.length === 0) return 12; // Default fallback (10 + 2)
+    const maxVal = data.reduce((acc, d) => Math.max(acc, Math.abs(d.x), Math.abs(d.y)), 0);
+    return Math.ceil(maxVal) + 2;
+  }, [data]);
+
+  const [xDomain, setXDomain] = useState<[number, number]>([-limit, limit]);
+  const [yDomain, setYDomain] = useState<[number, number]>([-limit, limit]);
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number } | null>(null);
 
-  // Reset domains when data changes significantly (optional, but good for UX if user searches new word)
+  // Reset domains when data changes significantly or limit changes
   useEffect(() => {
-    // Only reset if data is completely empty or changed? 
-    // For now, let's keep user's zoom state unless explicitly reset.
-  }, [data]);
+    setXDomain([-limit, limit]);
+    setYDomain([-limit, limit]);
+  }, [limit, data]);
 
   const handleZoom = (delta: number) => {
     const zoomFactor = delta > 0 ? 1.1 : 0.9;
     
     const xRange = xDomain[1] - xDomain[0];
     const yRange = yDomain[1] - yDomain[0];
+    const maxRange = limit * 2;
 
     // Limit max zoom in/out
     if (delta < 0 && (xRange < 2 || yRange < 2)) return; // Too close
-    if (delta > 0 && (xRange > 40 || yRange > 40)) return; // Too far
+    if (delta > 0 && (xRange > maxRange || yRange > maxRange)) return; // Too far
 
-    const newXRange = xRange * zoomFactor;
-    const newYRange = yRange * zoomFactor;
+    let newXRange = xRange * zoomFactor;
+    let newYRange = yRange * zoomFactor;
+
+    // Clamp range to max limit if zooming out would exceed it
+    if (newXRange > maxRange) newXRange = maxRange;
+    if (newYRange > maxRange) newYRange = maxRange;
 
     const xCenter = (xDomain[0] + xDomain[1]) / 2;
     const yCenter = (yDomain[0] + yDomain[1]) / 2;
 
-    setXDomain([xCenter - newXRange / 2, xCenter + newXRange / 2]);
-    setYDomain([yCenter - newYRange / 2, yCenter + newYRange / 2]);
+    let newXMin = xCenter - newXRange / 2;
+    let newXMax = xCenter + newXRange / 2;
+    let newYMin = yCenter - newYRange / 2;
+    let newYMax = yCenter + newYRange / 2;
+
+    // Clamp to boundaries if zooming out hits the edge
+    if (newXMin < -limit) {
+        const diff = -limit - newXMin;
+        newXMin += diff;
+        newXMax += diff;
+    }
+    if (newXMax > limit) {
+        const diff = limit - newXMax;
+        newXMax += diff; // newXMax is > limit, diff is negative.
+        newXMin += diff;
+    }
+    if (newYMin < -limit) {
+         const diff = -limit - newYMin;
+         newYMin += diff;
+         newYMax += diff;
+    }
+    if (newYMax > limit) {
+         const diff = limit - newYMax;
+         newYMax += diff;
+         newYMin += diff;
+    }
+
+    setXDomain([newXMin, newXMax]);
+    setYDomain([newYMin, newYMax]);
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -132,8 +171,36 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     const moveX = (dx / containerWidth) * xDomainRange * -1.5; // Invert and scale
     const moveY = (dy / containerHeight) * yDomainRange * 1.5; // Scale
 
-    setXDomain([xDomain[0] + moveX, xDomain[1] + moveX]);
-    setYDomain([yDomain[0] + moveY, yDomain[1] + moveY]);
+    let newXMin = xDomain[0] + moveX;
+    let newXMax = xDomain[1] + moveX;
+    let newYMin = yDomain[0] + moveY;
+    let newYMax = yDomain[1] + moveY;
+
+    // Limit Panning
+    const VIEW_LIMIT = limit;
+
+    if (newXMin < -VIEW_LIMIT) {
+        const diff = -VIEW_LIMIT - newXMin;
+        newXMin += diff;
+        newXMax += diff;
+    } else if (newXMax > VIEW_LIMIT) {
+        const diff = VIEW_LIMIT - newXMax;
+        newXMax += diff;
+        newXMin += diff;
+    }
+
+    if (newYMin < -VIEW_LIMIT) {
+        const diff = -VIEW_LIMIT - newYMin;
+        newYMin += diff;
+        newYMax += diff;
+    } else if (newYMax > VIEW_LIMIT) {
+        const diff = VIEW_LIMIT - newYMax;
+        newYMax += diff;
+        newYMin += diff;
+    }
+
+    setXDomain([newXMin, newXMax]);
+    setYDomain([newYMin, newYMax]);
 
     setLastMousePos({ x: e.clientX, y: e.clientY });
   };
@@ -144,8 +211,8 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
   };
 
   const resetZoom = () => {
-    setXDomain([-10, 10]);
-    setYDomain([-10, 10]);
+    setXDomain([-limit, limit]);
+    setYDomain([-limit, limit]);
   };
 
   const getAxisTicks = (domain: [number, number]) => {
