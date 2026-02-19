@@ -38,7 +38,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
             type="submit"
             disabled={isLoading || !word.trim()}
             className={cn(
-              "p-3 rounded-xl transition-all duration-300",
+              "p-3 rounded-xl transition-all duration-300 cursor-pointer",
               isLoading || !word.trim()
                 ? "bg-white/5 text-white/30 cursor-not-allowed"
                 : "bg-white text-indigo-900 hover:bg-white/90 hover:scale-105 active:scale-95 shadow-lg"
@@ -57,7 +57,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
         <button
           type="button"
           onClick={() => setShowAxisSettings(!showAxisSettings)}
-          className="text-xs text-white/60 hover:text-white transition-colors underline decoration-dotted"
+          className="text-xs text-white/60 hover:text-white transition-colors underline decoration-dotted cursor-pointer"
         >
           {showAxisSettings ? "軸設定を閉じる" : "軸をカスタマイズ"}
         </button>
@@ -71,13 +71,12 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
                 <label className="block text-white/60 text-xs">プリセットから選択</label>
                 <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
                     {[
-                        { name: "小説", x: "詩的・叙情的", y: "現実的・日常的" },
-                        { name: "論文", x: "専門的・学術的", y: "一般的・直感的" },
-                        { name: "ビジネス", x: "フォーマル・堅い", y: "カジュアル・親しみやすい" },
-                        { name: "アイデア", x: "実現可能性", y: "新規性・インパクト" },
-                        { name: "感情", x: "ポジティブ", y: "活動的・エネルギッシュ" },
-                        { name: "味覚", x: "甘い・濃厚", y: "さっぱり・酸味" },
-                        { name: "性格", x: "外交的", y: "論理的" },
+                        { name: "文体", x: "フォーマル度", y: "情緒的・文学的" },
+                        { name: "ビジネス", x: "論理・客観性", y: "熱意・エネルギー" },
+                        { name: "アイデア", x: "斬新さ・意外性", y: "実用性・実現性" },
+                        { name: "人間性", x: "親しみやすさ", y: "知性・冷静さ" },
+                        { name: "創作", x: "抽象・幻想的", y: "具体・現実的" },
+                        { name: "雰囲気", x: "明るさ・陽気", y: "激しさ・力強さ" },
                     ].map((preset) => (
                         <button
                             key={preset.name}

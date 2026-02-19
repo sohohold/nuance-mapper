@@ -72,11 +72,11 @@ export async function POST(req: Request) {
 
     const models = [
       "stepfun/step-3.5-flash:free",
-      "openrouter/free",
+      "openai/gpt-oss-120b:free",
       "arcee-ai/trinity-large-preview:free",
       "z-ai/glm-4.5-air:free",
       "deepseek/deepseek-r1-0528:free",
-      "openai/gpt-oss-120b:free",
+      "openrouter/free",
     ];
 
     let completion: any;
