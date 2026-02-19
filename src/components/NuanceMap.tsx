@@ -28,9 +28,17 @@ interface NuanceMapProps {
   yAxisLabel: string;
 }
 
-const CustomTooltip = ({ active, payload }: any) => {
+const CustomTooltip = ({ active, payload, allData }: { active?: boolean; payload?: any[]; allData: NuanceData[] }) => {
   if (active && payload && payload.length) {
-    const data = payload[0].payload;
+    const hoverData = payload[0].payload;
+    // 座標がほぼ一致するデータを全て検索
+    const sameLocationItems = allData.filter(d => 
+        Math.abs(d.x - hoverData.x) < 0.001 && Math.abs(d.y - hoverData.y) < 0.001
+    );
+    
+    // 万が一見つからない場合はホバー中のデータ単体を表示
+    const displayItems = sameLocationItems.length > 0 ? sameLocationItems : [hoverData];
+
     return (
       <AnimatePresence>
         <motion.div
@@ -38,18 +46,24 @@ const CustomTooltip = ({ active, payload }: any) => {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
-            className="bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 max-w-[240px] z-50 pointer-events-none"
+            className="bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 max-w-[280px] z-50 pointer-events-none"
         >
-            <div className="flex items-center gap-2 mb-2">
-                <span className={cn("w-2 h-2 rounded-full", 
-                    data.x > 0 ? (data.y > 0 ? "bg-pink-400" : "bg-violet-400") : (data.y > 0 ? "bg-emerald-400" : "bg-blue-400")
-                )} />
-                <p className="font-bold text-lg text-slate-800 leading-none">{data.word}</p>
+            <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+                {displayItems.map((data, idx) => (
+                    <div key={`${data.word}-${idx}`} className={cn("flex flex-col gap-1", idx !== 0 && "pt-3 border-t border-slate-100")}>
+                        <div className="flex items-center gap-2">
+                             <span className={cn("w-2 h-2 rounded-full flex-shrink-0",
+                                data.x > 0 ? (data.y > 0 ? "bg-pink-400" : "bg-violet-400") : (data.y > 0 ? "bg-emerald-400" : "bg-blue-400")
+                            )} />
+                            <p className="font-bold text-lg text-slate-800 leading-none break-words">{data.word}</p>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed font-medium pl-4">{data.nuance}</p>
+                    </div>
+                ))}
             </div>
-            <p className="text-xs text-slate-600 leading-relaxed font-medium">{data.nuance}</p>
-            <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100">
-                <span className="text-[10px] text-slate-400 font-mono">X: {data.x.toFixed(2)}</span>
-                <span className="text-[10px] text-slate-400 font-mono">Y: {data.y.toFixed(2)}</span>
+            <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-[10px] text-slate-400 font-mono">X: {hoverData.x.toFixed(1)}</span>
+                <span className="text-[10px] text-slate-400 font-mono">Y: {hoverData.y.toFixed(1)}</span>
             </div>
         </motion.div>
       </AnimatePresence>
@@ -134,6 +148,32 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     setYDomain([-10, 10]);
   };
 
+  const getAxisTicks = (domain: [number, number]) => {
+    const min = domain[0];
+    const max = domain[1];
+    const range = max - min;
+    
+    // 1刻みを基本としつつ、表示数が多すぎる場合は間引く (最大50目盛り)
+    const steps = [1, 2, 5, 10];
+    let step = steps[0];
+    
+    for (const s of steps) {
+      if (range / s <= 50) {
+        step = s;
+        break;
+      }
+      step = s;
+    }
+
+    const ticks: number[] = [];
+    const start = Math.ceil(min / step) * step;
+    for (let i = start; i <= max + (step / 1000); i += step) {
+      // 整数に丸める
+      ticks.push(Math.round(i));
+    }
+    return ticks;
+  };
+
   if (!data || data.length === 0) {
     return (
       <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
@@ -171,7 +211,7 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
                 name={xAxisLabel}
                 domain={xDomain}
                 allowDataOverflow
-                tickCount={5}
+                ticks={getAxisTicks(xDomain)}
                 stroke="rgba(255,255,255,0.5)"
                 tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 10 }}
                 label={{
@@ -189,7 +229,7 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
                 name={yAxisLabel}
                 domain={yDomain}
                 allowDataOverflow
-                tickCount={5}
+                ticks={getAxisTicks(yDomain)}
                 stroke="rgba(255,255,255,0.5)"
                 tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 10 }}
                 label={{
@@ -204,7 +244,7 @@ export function NuanceMap({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
             />
             <ZAxis type="number" range={[100, 400]} />
             <Tooltip 
-                content={<CustomTooltip />} 
+                content={<CustomTooltip allData={data} />} 
                 cursor={{ strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.3)" }}
                 isAnimationActive={false}
             />
