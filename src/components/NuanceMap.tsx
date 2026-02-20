@@ -56,44 +56,65 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
 };
 
 // Custom Node for the Origin lines
+const ORIGIN_SIZE = 2000; // px - size of the origin node container
+const ORIGIN_CENTER = ORIGIN_SIZE / 2;
+
 const OriginNode = ({ data }: { data: { xAxisLabel: string, yAxisLabel: string } }) => {
     // Generate tick marks from -10 to 10
     const ticks = Array.from({ length: 21 }, (_, i) => i - 10);
 
     return (
-        <div className="w-0 h-0 relative pointer-events-none">
+        <div style={{ width: ORIGIN_SIZE, height: ORIGIN_SIZE }} className="relative pointer-events-none">
             {/* Center Origin Dot */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white/30 bg-black/50 shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+            <div
+                className="absolute w-4 h-4 rounded-full border-2 border-white/30 bg-black/50 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                style={{ left: ORIGIN_CENTER - 8, top: ORIGIN_CENTER - 8 }}
+            />
 
-            {/* Axis Lines (Centered correctly across the full width and height) */}
-            <div className="absolute h-[2px] w-[8000px] bg-white/20 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-            <div className="absolute w-[2px] h-[8000px] bg-white/20 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-            
+            {/* Horizontal Axis Line */}
+            <div
+                className="absolute bg-white/20"
+                style={{ left: 0, top: ORIGIN_CENTER - 1, width: ORIGIN_SIZE, height: 2 }}
+            />
+            {/* Vertical Axis Line */}
+            <div
+                className="absolute bg-white/20"
+                style={{ left: ORIGIN_CENTER - 1, top: 0, width: 2, height: ORIGIN_SIZE }}
+            />
+
             {/* Ticks and Distance Labels */}
             {ticks.map(tick => {
                 if (tick === 0) return null;
+                const xTickPos = ORIGIN_CENTER + tick * SCALE;
+                const yTickPos = ORIGIN_CENTER - tick * SCALE;
                 return (
                     <div key={`tick-${tick}`}>
-                        {/* X-axis ticks */}
-                        <div className="absolute top-1/2 flex flex-col items-center -translate-x-1/2 -translate-y-1/2" style={{ left: `calc(50% + ${tick * SCALE}px)` }}>
+                        {/* X-axis tick */}
+                        <div className="absolute flex flex-col items-center" style={{ left: xTickPos - 1, top: ORIGIN_CENTER - 6 }}>
                             <div className="w-[2px] h-3 bg-white/40" />
-                            <div className="absolute top-full mt-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded">{tick > 0 ? `+${tick}` : tick}</div>
+                            <div className="mt-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">{tick > 0 ? `+${tick}` : tick}</div>
                         </div>
-                        
-                        {/* Y-axis ticks */}
-                        <div className="absolute left-1/2 flex items-center -translate-x-1/2 -translate-y-1/2" style={{ top: `calc(50% - ${tick * SCALE}px)` }}>
+
+                        {/* Y-axis tick */}
+                        <div className="absolute flex items-center" style={{ left: ORIGIN_CENTER - 6, top: yTickPos - 1 }}>
                             <div className="h-[2px] w-3 bg-white/40" />
-                            <div className="absolute left-full ml-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded">{tick > 0 ? `+${tick}` : tick}</div>
+                            <div className="ml-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">{tick > 0 ? `+${tick}` : tick}</div>
                         </div>
                     </div>
                 );
             })}
 
             {/* Axis Labels */}
-            <div className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 -translate-y-1/2 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider" style={{ top: '50%', left: `calc(50% + ${6 * SCALE}px)` }}>
+            <div
+                className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-y-1/2"
+                style={{ top: ORIGIN_CENTER, left: ORIGIN_CENTER + 6 * SCALE }}
+            >
                 {data.xAxisLabel} (+X)
             </div>
-            <div className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 -translate-x-1/2 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider" style={{ left: '50%', top: `calc(50% - ${6 * SCALE}px)` }}>
+            <div
+                className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-x-1/2"
+                style={{ left: ORIGIN_CENTER, top: ORIGIN_CENTER - 6 * SCALE }}
+            >
                 {data.yAxisLabel} (+Y)
             </div>
         </div>
