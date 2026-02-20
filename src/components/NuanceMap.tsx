@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -14,7 +14,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { ZoomIn, ZoomOut, Maximize, Move } from "lucide-react";
+import { Move } from "lucide-react";
 
 export interface NuanceData {
   word: string;
@@ -57,15 +57,43 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
 
 // Custom Node for the Origin lines
 const OriginNode = ({ data }: { data: { xAxisLabel: string, yAxisLabel: string } }) => {
+    // Generate tick marks from -10 to 10
+    const ticks = Array.from({ length: 21 }, (_, i) => i - 10);
+
     return (
-        <div className="w-0 h-0 flex items-center justify-center pointer-events-none relative z-[-1]">
-            <div className="absolute w-[8000px] h-px bg-white/20" />
-            <div className="absolute h-[8000px] w-px bg-white/20" />
+        <div className="w-0 h-0 relative pointer-events-none">
+            {/* Center Origin Dot */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white/30 bg-black/50 shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+
+            {/* Axis Lines (Centered correctly across the full width and height) */}
+            <div className="absolute h-[2px] w-[8000px] bg-white/20 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            <div className="absolute w-[2px] h-[8000px] bg-white/20 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
             
-            <div className="absolute px-3 py-1.5 bg-white/10 backdrop-blur-md rounded-lg border border-white/20 right-[-300px] top-3 text-white/80 text-sm font-bold whitespace-nowrap shadow-lg">
+            {/* Ticks and Distance Labels */}
+            {ticks.map(tick => {
+                if (tick === 0) return null;
+                return (
+                    <div key={`tick-${tick}`}>
+                        {/* X-axis ticks */}
+                        <div className="absolute top-1/2 flex flex-col items-center -translate-x-1/2 -translate-y-1/2" style={{ left: `calc(50% + ${tick * SCALE}px)` }}>
+                            <div className="w-[2px] h-3 bg-white/40" />
+                            <div className="absolute top-full mt-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded">{tick > 0 ? `+${tick}` : tick}</div>
+                        </div>
+                        
+                        {/* Y-axis ticks */}
+                        <div className="absolute left-1/2 flex items-center -translate-x-1/2 -translate-y-1/2" style={{ top: `calc(50% - ${tick * SCALE}px)` }}>
+                            <div className="h-[2px] w-3 bg-white/40" />
+                            <div className="absolute left-full ml-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded">{tick > 0 ? `+${tick}` : tick}</div>
+                        </div>
+                    </div>
+                );
+            })}
+
+            {/* Axis Labels */}
+            <div className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 -translate-y-1/2 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider" style={{ top: '50%', left: `calc(50% + ${6 * SCALE}px)` }}>
                 {data.xAxisLabel} (+X)
             </div>
-            <div className="absolute px-3 py-1.5 bg-white/10 backdrop-blur-md rounded-lg border border-white/20 top-[-300px] left-3 text-white/80 text-sm font-bold whitespace-nowrap shadow-lg">
+            <div className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 -translate-x-1/2 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider" style={{ left: '50%', top: `calc(50% - ${6 * SCALE}px)` }}>
                 {data.yAxisLabel} (+Y)
             </div>
         </div>
@@ -80,6 +108,7 @@ const nodeTypes = {
 function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     const { fitView, zoomIn, zoomOut } = useReactFlow();
     const [hoverInfo, setHoverInfo] = useState<{ x: number, y: number, items: NuanceData[] } | null>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const nodes = useMemo(() => {
         const outNodes: Node[] = [];
@@ -93,7 +122,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
             selectable: false,
             draggable: false,
             origin: [0.5, 0.5],
-            zIndex: -1
+            zIndex: 0
         });
 
         if (!data || data.length === 0) return outNodes;
@@ -147,14 +176,22 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     };
 
     const onNodeMouseEnter = useCallback((event: React.MouseEvent, node: Node) => {
-        if (node.type === 'wordNode') {
-            setHoverInfo({ x: event.clientX, y: event.clientY, items: node.data.items as NuanceData[] });
-        }
-    }, []);
+        if (node.type === 'wordNode' && containerRef.current) {
+            const containerRect = containerRef.current.getBoundingClientRect();
+            // Get the HTML element of the node that was hovered
+            const nodeElement = (event.target as HTMLElement).closest('.react-flow__node');
+            
+            let x = event.clientX - containerRect.left;
+            let y = event.clientY - containerRect.top;
 
-    const onNodeMouseMove = useCallback((event: React.MouseEvent, node: Node) => {
-        if (node.type === 'wordNode') {
-            setHoverInfo(prev => prev ? { ...prev, x: event.clientX, y: event.clientY } : null);
+            // If we found the node's DOM element, use its bounds to perfectly center the tooltip above it
+            if (nodeElement) {
+                const nodeRect = nodeElement.getBoundingClientRect();
+                x = (nodeRect.left + nodeRect.width / 2) - containerRect.left;
+                y = nodeRect.top - containerRect.top;
+            }
+
+            setHoverInfo({ x, y, items: node.data.items as NuanceData[] });
         }
     }, []);
 
@@ -171,16 +208,17 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     }
 
     return (
-        <div className="relative group w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden">
+        <div ref={containerRef} className="relative group w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden">
             <ReactFlow
+                width={12}
+                height={12}
                 nodes={nodes}
                 nodeTypes={nodeTypes}
                 onNodeMouseEnter={onNodeMouseEnter}
-                onNodeMouseMove={onNodeMouseMove}
                 onNodeMouseLeave={onNodeMouseLeave}
                 onPaneMouseEnter={() => setHoverInfo(null)}
                 onMoveStart={() => setHoverInfo(null)}
-                minZoom={0.1}
+                minZoom={0.5}
                 maxZoom={4}
                 proOptions={{ hideAttribution: true }}
                 className="transition-cursor cursor-grab active:cursor-grabbing"
@@ -212,14 +250,14 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
             <AnimatePresence>
                 {hoverInfo && (
                     <motion.div
-                        initial={{ opacity: 0, scale: 0.9, y: 5 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
+                        initial={{ opacity: 0, scale: 0.9, y: "-80%", x: "-50%" }}
+                        animate={{ opacity: 1, scale: 1, y: "calc(-100% - 15px)", x: "-50%" }}
+                        exit={{ opacity: 0, scale: 0.9, y: "-80%", x: "-50%" }}
                         transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                        className="fixed bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[280px] z-100 pointer-events-none"
+                        className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[280px] z-100 pointer-events-none"
                         style={{ 
-                            left: hoverInfo.x + 15 > (typeof window !== 'undefined' ? window.innerWidth - 300 : 1000) ? hoverInfo.x - 300 : hoverInfo.x + 15,
-                            top: hoverInfo.y + 15 > (typeof window !== 'undefined' ? window.innerHeight - 300 : 1000) ? hoverInfo.y - 300 : hoverInfo.y + 15,
+                            left: hoverInfo.x,
+                            top: hoverInfo.y,
                         }}
                     >
                         <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
