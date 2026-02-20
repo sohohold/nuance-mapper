@@ -85,10 +85,10 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
                 <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
                     {[
                         { name: "文体", x: "フォーマル度", y: "情緒的・文学的" },
+                        { name: "創作", x: "比喩度", y: "正負の感情度" },
                         { name: "ビジネス", x: "論理・客観性", y: "熱意・エネルギー" },
                         { name: "アイデア", x: "斬新さ・意外性", y: "実用性・実現性" },
                         { name: "人間性", x: "親しみやすさ", y: "知性・冷静さ" },
-                        { name: "創作", x: "抽象・幻想的", y: "具体・現実的" },
                         { name: "雰囲気", x: "明るさ・陽気", y: "激しさ・力強さ" },
                     ].map((preset) => (
                         <button
