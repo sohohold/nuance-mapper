@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { InputArea } from "@/components/InputArea";
-import { NuanceMap, NuanceData } from "@/components/NuanceMap";
+import { type NuanceData, NuanceMap } from "@/components/NuanceMap";
 
 export default function Home() {
   const [data, setData] = useState<NuanceData[]>([]);
@@ -44,9 +44,8 @@ export default function Home() {
       {/* Dynamic Background Elements */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-purple-600/30 blur-[120px] animate-pulse" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
-      
+
       <div className="relative z-10 container mx-auto px-4 py-8 md:py-16 flex flex-col items-center gap-8 md:gap-12">
-        
         {/* Header */}
         <div className="text-center space-y-4">
           <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
@@ -64,10 +63,10 @@ export default function Home() {
 
         {/* Visualization Section */}
         <div className="w-full max-w-4xl animate-in fade-in slide-in-from-bottom-8 duration-700">
-          <NuanceMap 
-            data={data} 
-            xAxisLabel={xAxisLabel} 
-            yAxisLabel={yAxisLabel} 
+          <NuanceMap
+            data={data}
+            xAxisLabel={xAxisLabel}
+            yAxisLabel={yAxisLabel}
           />
         </div>
 

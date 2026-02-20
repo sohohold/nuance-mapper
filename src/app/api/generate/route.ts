@@ -1,25 +1,33 @@
-import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import OpenAI from "openai";
+import type { ChatCompletion } from "openai/resources/chat/completions";
 
 export async function POST(req: Request) {
   try {
     const { word, xAxis, yAxis } = await req.json();
 
     if (!word) {
-      return NextResponse.json(
-        { error: "Word is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Word is required" }, { status: 400 });
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-        console.warn("OPENROUTER_API_KEY is not set. Returning mock data.");
-        return NextResponse.json([
-            { word: "MockData 1", x: 5, y: 5, nuance: "APIキー未設定時のモックデータ" },
-            { word: "MockData 2", x: -5, y: -5, nuance: "環境変数を設定してください" },
-            { word: word, x: 0, y: 0, nuance: "入力された単語" }
-        ]);
+      console.warn("OPENROUTER_API_KEY is not set. Returning mock data.");
+      return NextResponse.json([
+        {
+          word: "MockData 1",
+          x: 5,
+          y: 5,
+          nuance: "APIキー未設定時のモックデータ",
+        },
+        {
+          word: "MockData 2",
+          x: -5,
+          y: -5,
+          nuance: "環境変数を設定してください",
+        },
+        { word: word, x: 0, y: 0, nuance: "入力された単語" },
+      ]);
     }
 
     const openai = new OpenAI({
@@ -79,8 +87,8 @@ export async function POST(req: Request) {
       "openrouter/free",
     ];
 
-    let completion: any;
-    let lastError: any;
+    let completion: ChatCompletion | null = null;
+    let lastError: unknown;
 
     for (const model of models) {
       try {
@@ -88,8 +96,12 @@ export async function POST(req: Request) {
         completion = await openai.chat.completions.create({
           model: model,
           messages: [
-            { role: "system", content: "You are a helpful assistant that outputs strictly JSON." },
-            { role: "user", content: prompt }
+            {
+              role: "system",
+              content:
+                "You are a helpful assistant that outputs strictly JSON.",
+            },
+            { role: "user", content: prompt },
           ],
           // response_format: { type: "json_object" }, // Many free/reasoning models don't support this
         });
@@ -112,34 +124,40 @@ export async function POST(req: Request) {
     // Try to parse JSON. Sometimes models output markdown code blocks.
     let jsonStr = content.trim();
     if (jsonStr.startsWith("```json")) {
-        jsonStr = jsonStr.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+      jsonStr = jsonStr.replace(/^```json\n?/, "").replace(/\n?```$/, "");
     } else if (jsonStr.startsWith("```")) {
-        jsonStr = jsonStr.replace(/^```\n?/, "").replace(/\n?```$/, "");
+      jsonStr = jsonStr.replace(/^```\n?/, "").replace(/\n?```$/, "");
     }
 
     const data = JSON.parse(jsonStr);
 
     // Ensure data is an array. Sometimes response_format: json_object makes it wrap in an object like { "result": [...] }
     if (!Array.isArray(data)) {
-        if (data.results && Array.isArray(data.results)) return NextResponse.json(data.results);
-        if (data.words && Array.isArray(data.words)) return NextResponse.json(data.words);
-        if (data.synonyms && Array.isArray(data.synonyms)) return NextResponse.json(data.synonyms);
-        // Fallback: try to find any array in values
-        const arrayVal = Object.values(data).find(v => Array.isArray(v));
-        if (arrayVal) return NextResponse.json(arrayVal);
+      if (data.results && Array.isArray(data.results))
+        return NextResponse.json(data.results);
+      if (data.words && Array.isArray(data.words))
+        return NextResponse.json(data.words);
+      if (data.synonyms && Array.isArray(data.synonyms))
+        return NextResponse.json(data.synonyms);
+      // Fallback: try to find any array in values
+      const arrayVal = Object.values(data).find((v) => Array.isArray(v));
+      if (arrayVal) return NextResponse.json(arrayVal);
     }
-    
-    return NextResponse.json(data);
 
-  } catch (error: any) {
+    return NextResponse.json(data);
+  } catch (error: unknown) {
     console.error("Error generating nuances:", error);
-    if (error.response) {
-        console.error("OpenAI API Response Error:", error.response.data);
+    if (error instanceof Error && "response" in error) {
+      console.error(
+        "OpenAI API Response Error:",
+        (error as Error & { response: { data: unknown } }).response.data,
+      );
     }
     console.error("API Key present:", !!process.env.OPENROUTER_API_KEY);
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Internal Server Error", details: error.message },
-      { status: 500 }
+      { error: "Internal Server Error", details: message },
+      { status: 500 },
     );
   }
 }
