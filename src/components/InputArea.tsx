@@ -11,8 +11,8 @@ interface InputAreaProps {
 
 export function InputArea({ onSearch, isLoading }: InputAreaProps) {
   const [word, setWord] = useState("");
-  const [xAxis, setXAxis] = useState("フォーマル度");
-  const [yAxis, setYAxis] = useState("文学的・情緒度");
+  const [xAxis, setXAxis] = useState("比喩度");
+  const [yAxis, setYAxis] = useState("正負の感情度");
   const [showAxisSettings, setShowAxisSettings] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -88,8 +88,8 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
             </label>
             <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
               {[
-                { name: "文体", x: "フォーマル度", y: "情緒的・文学的" },
                 { name: "創作", x: "比喩度", y: "正負の感情度" },
+                { name: "文体", x: "フォーマル度", y: "情緒的・文学的" },
                 { name: "ビジネス", x: "論理・客観性", y: "熱意・エネルギー" },
                 { name: "アイデア", x: "斬新さ・意外性", y: "実用性・実現性" },
                 { name: "人間性", x: "親しみやすさ", y: "知性・冷静さ" },

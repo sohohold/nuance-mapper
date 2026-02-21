@@ -45,7 +45,10 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center cursor-pointer group">
+    <div
+      className="flex flex-col items-center cursor-pointer group"
+      style={{ transform: "translate(-50%, -6px)" }}
+    >
       <div
         className={cn(
           "w-3 h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover:scale-150",
@@ -209,7 +212,6 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
         position: { x: group.x * SCALE, y: -group.y * SCALE },
         data: { items: group.items },
         type: "wordNode",
-        origin: [0.5, 0.5],
         draggable: false,
         selectable: false,
         zIndex: 10,
