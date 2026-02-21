@@ -272,7 +272,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
   return (
     <div
       ref={containerRef}
-      className="relative group w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
+      className="relative w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
         width={12}
