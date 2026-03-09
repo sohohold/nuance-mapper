@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence, motion } from "framer-motion";
-import { Move } from "lucide-react";
+import { Loader2, Move } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface NuanceData {
@@ -27,6 +27,7 @@ interface NuanceMapProps {
   data: NuanceData[];
   xAxisLabel: string;
   yAxisLabel: string;
+  isLoading?: boolean;
 }
 
 const SCALE = 50;
@@ -165,7 +166,7 @@ const nodeTypes = {
   originNode: OriginNode,
 };
 
-function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
+function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMapProps) {
   const { fitView } = useReactFlow();
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
@@ -221,14 +222,14 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
     return outNodes;
   }, [data, xAxisLabel, yAxisLabel]);
 
-  // Initial fitView when nodes load
+  // Debounced fitView — settles after items stop arriving (streaming)
   useEffect(() => {
     const wordNodes = nodes.filter((n) => n.type === "wordNode");
     if (wordNodes.length > 0) {
-      // timeout allows nodes to be registered correctly before fitting view
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         fitView({ nodes: wordNodes, duration: 800, padding: 0.2 });
-      }, 50);
+      }, 300);
+      return () => clearTimeout(timer);
     }
   }, [nodes, fitView]);
 
@@ -264,7 +265,14 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel }: NuanceMapProps) {
   if (!data || data.length === 0) {
     return (
       <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
-        <p>言葉を入力してマッピングを開始してください</p>
+        {isLoading ? (
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-white/40" />
+            <p>ニュアンスを生成中...</p>
+          </div>
+        ) : (
+          <p>言葉を入力してマッピングを開始してください</p>
+        )}
       </div>
     );
   }

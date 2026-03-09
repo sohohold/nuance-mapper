@@ -1,42 +1,119 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import type { ChatCompletion } from "openai/resources/chat/completions";
+
+interface NuanceItem {
+  word: string;
+  x: number;
+  y: number;
+  nuance: string;
+}
+
+// ── In-memory cache ──────────────────────────────────────────────────
+const cache = new Map<string, NuanceItem[]>();
+const CACHE_MAX = 200;
+
+// ── SSE helpers ──────────────────────────────────────────────────────
+function createSSEStream(items: NuanceItem[], stagger: boolean): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+
+  const stream = new ReadableStream({
+    async pull(controller) {
+      if (index < items.length) {
+        // Small stagger between items for visual streaming effect
+        if (stagger && index > 0) {
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(items[index])}\n\n`),
+        );
+        index++;
+      } else {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
+// ── Normalize model response to array ────────────────────────────────
+function normalizeItems(data: unknown): NuanceItem[] {
+  if (Array.isArray(data)) return data;
+  if (typeof data === "object" && data !== null) {
+    const obj = data as Record<string, unknown>;
+    for (const key of ["results", "words", "synonyms"]) {
+      if (Array.isArray(obj[key])) return obj[key] as NuanceItem[];
+    }
+    const arr = Object.values(obj).find((v) => Array.isArray(v));
+    if (arr) return arr as NuanceItem[];
+  }
+  throw new Error("Could not parse response as items array");
+}
+
+// ── Strip markdown code fences ───────────────────────────────────────
+function stripCodeFences(str: string): string {
+  let s = str.trim();
+  if (s.startsWith("```json")) {
+    s = s.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+  } else if (s.startsWith("```")) {
+    s = s.replace(/^```\n?/, "").replace(/\n?```$/, "");
+  }
+  return s;
+}
 
 export async function POST(req: Request) {
   try {
     const { word, xAxis, yAxis } = await req.json();
 
     if (!word) {
-      return NextResponse.json({ error: "Word is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Word is required" },
+        { status: 400 },
+      );
+    }
+
+    // ── Cache check ────────────────────────────────────────────────
+    const cacheKey = `${word}|${xAxis}|${yAxis}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      console.log(`Cache hit: ${cacheKey}`);
+      return createSSEStream(cached, false);
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       console.warn("OPENROUTER_API_KEY is not set. Returning mock data.");
-      return NextResponse.json([
-        {
-          word: "MockData 1",
-          x: 5,
-          y: 5,
-          nuance: "APIキー未設定時のモックデータ",
-        },
-        {
-          word: "MockData 2",
-          x: -5,
-          y: -5,
-          nuance: "環境変数を設定してください",
-        },
-        { word: word, x: 0, y: 0, nuance: "入力された単語" },
-      ]);
+      return createSSEStream(
+        [
+          {
+            word: "MockData 1",
+            x: 5,
+            y: 5,
+            nuance: "APIキー未設定時のモックデータ",
+          },
+          {
+            word: "MockData 2",
+            x: -5,
+            y: -5,
+            nuance: "環境変数を設定してください",
+          },
+          { word: word, x: 0, y: 0, nuance: "入力された単語" },
+        ],
+        false,
+      );
     }
 
     const openai = new OpenAI({
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: apiKey,
-      // defaultHeaders: {
-      //   "HTTP-Referer": "https://nuance-mapper.vercel.app", // Adjust as necessary
-      //   "X-Title": "Nuance Mapper",
-      // },
     });
 
     const AXIS_MAX_VAL = 10;
@@ -92,71 +169,58 @@ export async function POST(req: Request) {
 
     const models = [
       "openai/gpt-oss-120b:free",
-      "stepfun/step-3.5-flash:free",
-      "arcee-ai/trinity-large-preview:free",
       "z-ai/glm-4.5-air:free",
       "deepseek/deepseek-r1-0528:free",
       "openrouter/free",
     ];
 
-    let completion: ChatCompletion | null = null;
-    let lastError: unknown;
+    // ── Race all models in parallel ──────────────────────────────────
+    const controllers = models.map(() => new AbortController());
 
-    for (const model of models) {
-      try {
-        console.log(`Trying model: ${model}`);
-        completion = await openai.chat.completions.create({
-          model: model,
-          messages: [
+    const items = await Promise.any(
+      models.map((model, i) => {
+        console.log(`Racing model: ${model}`);
+        return openai.chat.completions
+          .create(
             {
-              role: "system",
-              content:
-                "You are a helpful assistant that outputs strictly JSON.",
+              model: model,
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a helpful assistant that outputs strictly JSON.",
+                },
+                { role: "user", content: prompt },
+              ],
             },
-            { role: "user", content: prompt },
-          ],
-          // response_format: { type: "json_object" }, // Many free/reasoning models don't support this
-        });
-        if (completion) break;
-      } catch (e) {
-        console.warn(`Model ${model} failed:`, e);
-        lastError = e;
-      }
+            { signal: controllers[i].signal },
+          )
+          .then((result) => {
+            const content = result.choices[0]?.message?.content;
+            if (!content) throw new Error(`${model}: empty content`);
+
+            const jsonStr = stripCodeFences(content);
+            const parsed = JSON.parse(jsonStr);
+            const normalized = normalizeItems(parsed);
+
+            console.log(`Winner: ${model} (${normalized.length} items)`);
+            // Abort remaining in-flight requests
+            for (let j = 0; j < controllers.length; j++) {
+              if (j !== i) controllers[j].abort();
+            }
+            return normalized;
+          });
+      }),
+    );
+
+    // ── Cache result ─────────────────────────────────────────────────
+    if (cache.size >= CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
     }
+    cache.set(cacheKey, items);
 
-    if (!completion) {
-      throw lastError || new Error("All models failed");
-    }
-
-    const content = completion.choices[0].message.content;
-    if (!content) {
-      throw new Error("No content received from OpenRouter");
-    }
-
-    // Try to parse JSON. Sometimes models output markdown code blocks.
-    let jsonStr = content.trim();
-    if (jsonStr.startsWith("```json")) {
-      jsonStr = jsonStr.replace(/^```json\n?/, "").replace(/\n?```$/, "");
-    } else if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```\n?/, "").replace(/\n?```$/, "");
-    }
-
-    const data = JSON.parse(jsonStr);
-
-    // Ensure data is an array. Sometimes response_format: json_object makes it wrap in an object like { "result": [...] }
-    if (!Array.isArray(data)) {
-      if (data.results && Array.isArray(data.results))
-        return NextResponse.json(data.results);
-      if (data.words && Array.isArray(data.words))
-        return NextResponse.json(data.words);
-      if (data.synonyms && Array.isArray(data.synonyms))
-        return NextResponse.json(data.synonyms);
-      // Fallback: try to find any array in values
-      const arrayVal = Object.values(data).find((v) => Array.isArray(v));
-      if (arrayVal) return NextResponse.json(arrayVal);
-    }
-
-    return NextResponse.json(data);
+    return createSSEStream(items, true);
   } catch (error: unknown) {
     console.error("Error generating nuances:", error);
     if (error instanceof Error && "response" in error) {

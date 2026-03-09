@@ -19,9 +19,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ word, xAxis, yAxis }),
       });
 
@@ -29,8 +27,44 @@ export default function Home() {
         throw new Error("Failed to fetch data");
       }
 
-      const result = await response.json();
-      setData(result);
+      const contentType = response.headers.get("content-type") || "";
+
+      if (contentType.includes("text/event-stream") && response.body) {
+        // SSE streaming response — add items incrementally
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6);
+            if (payload === "[DONE]") continue;
+            try {
+              const item = JSON.parse(payload);
+              setData((prev) => [...prev, item]);
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+      } else {
+        // Fallback: regular JSON response (e.g. error)
+        const result = await response.json();
+        if (Array.isArray(result)) {
+          setData(result);
+        } else if (result.error) {
+          throw new Error(result.details || result.error);
+        }
+      }
     } catch (error) {
       console.error("Error fetching data:", error);
       alert("エラーが発生しました。もう一度お試しください。");
@@ -67,6 +101,7 @@ export default function Home() {
             data={data}
             xAxisLabel={xAxisLabel}
             yAxisLabel={yAxisLabel}
+            isLoading={loading}
           />
         </div>
 
