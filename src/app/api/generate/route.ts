@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { cacheGet, cacheSet } from "@/lib/cache";
+import { rateLimit } from "@/lib/rate-limit";
 
 interface NuanceItem {
   word: string;
@@ -7,10 +9,6 @@ interface NuanceItem {
   y: number;
   nuance: string;
 }
-
-// ── In-memory cache ──────────────────────────────────────────────────
-const cache = new Map<string, NuanceItem[]>();
-const CACHE_MAX = 200;
 
 // ── SSE helpers ──────────────────────────────────────────────────────
 function createSSEStream(items: NuanceItem[], stagger: boolean): Response {
@@ -71,6 +69,19 @@ function stripCodeFences(str: string): string {
 
 export async function POST(req: Request) {
   try {
+    // ── Rate limit (10 requests per minute per IP) ───────────────
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = rateLimit(ip, { limit: 10, windowMs: 60_000 });
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many requests", retryAfter: rl.retryAfter },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+      );
+    }
+
     const { word, xAxis, yAxis } = await req.json();
 
     if (!word) {
@@ -82,7 +93,7 @@ export async function POST(req: Request) {
 
     // ── Cache check ────────────────────────────────────────────────
     const cacheKey = `${word}|${xAxis}|${yAxis}`;
-    const cached = cache.get(cacheKey);
+    const cached = cacheGet<NuanceItem>(cacheKey);
     if (cached) {
       console.log(`Cache hit: ${cacheKey}`);
       return createSSEStream(cached, false);
@@ -214,11 +225,7 @@ export async function POST(req: Request) {
     );
 
     // ── Cache result ─────────────────────────────────────────────────
-    if (cache.size >= CACHE_MAX) {
-      const oldest = cache.keys().next().value;
-      if (oldest !== undefined) cache.delete(oldest);
-    }
-    cache.set(cacheKey, items);
+    cacheSet(cacheKey, items);
 
     return createSSEStream(items, true);
   } catch (error: unknown) {
@@ -236,4 +243,9 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+}
+
+// Lightweight HEAD handler for preflight cache warming
+export async function HEAD() {
+  return new Response(null, { status: 200 });
 }

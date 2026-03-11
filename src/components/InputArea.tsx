@@ -2,6 +2,7 @@
 
 import { Loader2, Search } from "lucide-react";
 import { useState } from "react";
+import { useDictionary } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface InputAreaProps {
@@ -10,9 +11,20 @@ interface InputAreaProps {
 }
 
 export function InputArea({ onSearch, isLoading }: InputAreaProps) {
+  const { t } = useDictionary();
+
+  const presets = [
+    { name: t.presetCreative, x: t.axisMetaphor, y: t.axisSentiment },
+    { name: t.presetStyle, x: t.axisFormality, y: t.axisLiterary },
+    { name: t.presetBusiness, x: t.axisLogic, y: t.axisEnthusiasm },
+    { name: t.presetIdeas, x: t.axisNovelty, y: t.axisPracticality },
+    { name: t.presetHumanity, x: t.axisFriendliness, y: t.axisIntellect },
+    { name: t.presetAtmosphere, x: t.axisBrightness, y: t.axisIntensity },
+  ];
+
   const [word, setWord] = useState("");
-  const [xAxis, setXAxis] = useState("比喩度");
-  const [yAxis, setYAxis] = useState("正負の感情度");
+  const [xAxis, setXAxis] = useState<string>(presets[0].x);
+  const [yAxis, setYAxis] = useState<string>(presets[0].y);
   const [showAxisSettings, setShowAxisSettings] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -34,16 +46,16 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
             value={word}
             onChange={(e) => setWord(e.target.value)}
             maxLength={24}
-            placeholder="言葉を入力してください (例: すごい)"
+            placeholder={t.inputPlaceholder}
             className="flex-1 relative z-10 bg-transparent px-4 py-3 text-lg text-white placeholder:text-white/50 focus:outline-none"
             disabled={isLoading}
           />
           {isLoading && (
             <div className="absolute bottom-full right-0 mb-4 w-48 z-50 animate-in fade-in zoom-in slide-in-from-bottom-2 duration-300">
               <div className="relative bg-[#FFD700] text-indigo-900 text-xs font-bold px-3 py-2 rounded-xl shadow-lg border-2 border-white transform rotate-1">
-                <p>10秒以上かかる場合があります 🐢</p>
+                <p>{t.slowWarning}</p>
                 {/* Arrow */}
-                <div className="absolute -bottom-2 right-4 w-4 h-4 bg-[#FFD700] border-b-2 border-r-2 border-white transform rotate-45"></div>
+                <div className="absolute -bottom-2 right-4 w-4 h-4 bg-[#FFD700] border-b-2 border-r-2 border-white transform rotate-45" />
               </div>
             </div>
           )}
@@ -72,7 +84,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
           onClick={() => setShowAxisSettings(!showAxisSettings)}
           className="text-xs text-white/60 hover:text-white transition-colors underline decoration-dotted cursor-pointer"
         >
-          {showAxisSettings ? "軸設定を閉じる" : "軸をカスタマイズ"}
+          {showAxisSettings ? t.closeAxisSettings : t.customizeAxis}
         </button>
       </div>
 
@@ -84,17 +96,10 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
               htmlFor="preset-select"
               className="block text-white/60 text-xs"
             >
-              プリセットから選択
+              {t.presetLabel}
             </label>
             <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-              {[
-                { name: "創作", x: "比喩度", y: "正負の感情度" },
-                { name: "文体", x: "フォーマル度", y: "情緒的・文学的" },
-                { name: "ビジネス", x: "論理・客観性", y: "熱意・エネルギー" },
-                { name: "アイデア", x: "斬新さ・意外性", y: "実用性・実現性" },
-                { name: "人間性", x: "親しみやすさ", y: "知性・冷静さ" },
-                { name: "雰囲気", x: "明るさ・陽気", y: "激しさ・力強さ" },
-              ].map((preset) => (
+              {presets.map((preset) => (
                 <button
                   key={preset.name}
                   type="button"
@@ -118,7 +123,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-white/10">
             <div className="space-y-2">
               <label htmlFor="x-axis-label" className="block text-white/80">
-                X軸ラベル (横軸)
+                {t.xAxisLabel}
               </label>
               <input
                 id="x-axis-label"
@@ -128,12 +133,12 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
                 className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
               />
               <p className="text-xs text-white/40">
-                -10 <span className="mx-1">↔</span> +10
+                -10 <span className="mx-1">&harr;</span> +10
               </p>
             </div>
             <div className="space-y-2">
               <label htmlFor="y-axis-label" className="block text-white/80">
-                Y軸ラベル (縦軸)
+                {t.yAxisLabel}
               </label>
               <input
                 id="y-axis-label"
@@ -143,7 +148,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
                 className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-white/50 transition-colors"
               />
               <p className="text-xs text-white/40">
-                -10 <span className="mx-1">↔</span> +10
+                -10 <span className="mx-1">&harr;</span> +10
               </p>
             </div>
           </div>

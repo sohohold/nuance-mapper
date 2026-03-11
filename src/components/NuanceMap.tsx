@@ -14,14 +14,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, Move } from "lucide-react";
+import type { NuanceData } from "@/lib/types";
+import { useDictionary } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-export interface NuanceData {
-  word: string;
-  x: number;
-  y: number;
-  nuance: string;
-}
+export type { NuanceData };
 
 interface NuanceMapProps {
   data: NuanceData[];
@@ -167,6 +164,7 @@ const nodeTypes = {
 };
 
 function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMapProps) {
+  const { t } = useDictionary();
   const { fitView } = useReactFlow();
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
@@ -268,10 +266,10 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
         {isLoading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white/40" />
-            <p>ニュアンスを生成中...</p>
+            <p>{t.generating}</p>
           </div>
         ) : (
-          <p>言葉を入力してマッピングを開始してください</p>
+          <p>{t.emptyState}</p>
         )}
       </div>
     );
@@ -398,7 +396,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
       {/* Help text */}
       <div className="absolute top-4 right-4 text-white/40 text-xs pointer-events-none flex items-center gap-1.5 px-3 py-1.5 bg-black/20 rounded-full backdrop-blur-sm border border-white/10">
         <Move size={12} />
-        <span>Drag to pan, Scroll to zoom</span>
+        <span>{t.helpText}</span>
       </div>
     </div>
   );

@@ -1,20 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { InputArea } from "@/components/InputArea";
-import { type NuanceData, NuanceMap } from "@/components/NuanceMap";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import type { NuanceData } from "@/lib/types";
+import { I18nProvider, useDictionary } from "@/lib/i18n";
 
-export default function Home() {
+const NuanceMap = dynamic(
+  () => import("@/components/NuanceMap").then((m) => m.NuanceMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+        <p>Loading...</p>
+      </div>
+    ),
+  },
+);
+
+function HomeContent() {
+  const { t } = useDictionary();
   const [data, setData] = useState<NuanceData[]>([]);
   const [loading, setLoading] = useState(false);
-  const [xAxisLabel, setXAxisLabel] = useState("フォーマル度");
-  const [yAxisLabel, setYAxisLabel] = useState("文学的・情緒度");
+  const [xAxisLabel, setXAxisLabel] = useState<string>(t.axisFormality);
+  const [yAxisLabel, setYAxisLabel] = useState<string>(t.axisLiterary);
+
+  // Warm up preflight cache on mount
+  useEffect(() => {
+    fetch("/api/generate", { method: "HEAD" }).catch(() => {});
+  }, []);
 
   const handleSearch = async (word: string, xAxis: string, yAxis: string) => {
     setLoading(true);
     setXAxisLabel(xAxis);
     setYAxisLabel(yAxis);
-    setData([]); // Clear previous results
+    setData([]);
 
     try {
       const response = await fetch("/api/generate", {
@@ -30,7 +51,6 @@ export default function Home() {
       const contentType = response.headers.get("content-type") || "";
 
       if (contentType.includes("text/event-stream") && response.body) {
-        // SSE streaming response — add items incrementally
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -57,7 +77,6 @@ export default function Home() {
           }
         }
       } else {
-        // Fallback: regular JSON response (e.g. error)
         const result = await response.json();
         if (Array.isArray(result)) {
           setData(result);
@@ -67,7 +86,7 @@ export default function Home() {
       }
     } catch (error) {
       console.error("Error fetching data:", error);
-      alert("エラーが発生しました。もう一度お試しください。");
+      alert(t.errorGeneric);
     } finally {
       setLoading(false);
     }
@@ -80,13 +99,18 @@ export default function Home() {
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
 
       <div className="relative z-10 container mx-auto px-4 py-8 md:py-16 flex flex-col items-center gap-8 md:gap-12">
+        {/* Language Switcher */}
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
+
         {/* Header */}
         <div className="text-center space-y-4">
           <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
-            Nuance Mapper
+            {t.title}
           </h1>
           <p className="text-white/60 text-lg md:text-xl font-light tracking-wide max-w-lg mx-auto">
-            言葉の機微を、地図のように探索する。
+            {t.subtitle}
           </p>
         </div>
 
@@ -107,9 +131,17 @@ export default function Home() {
 
         {/* Footer */}
         <footer className="w-full text-center text-white/20 text-sm mt-8">
-          <p>© 2026 Nuance Mapper. Powered by Gemini.</p>
+          <p>{t.copyright}</p>
         </footer>
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <I18nProvider>
+      <HomeContent />
+    </I18nProvider>
   );
 }
