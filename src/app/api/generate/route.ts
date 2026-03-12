@@ -11,12 +11,29 @@ interface NuanceItem {
 }
 
 // ── SSE helpers ──────────────────────────────────────────────────────
-function createSSEStream(items: NuanceItem[], stagger: boolean): Response {
+function createSSEStream(
+  items: NuanceItem[],
+  stagger: boolean,
+  meta?: { fromCache?: boolean },
+): Response {
   const encoder = new TextEncoder();
   let index = 0;
+  let metaSent = false;
 
   const stream = new ReadableStream({
     async pull(controller) {
+      // Send metadata event first (cache source info)
+      if (!metaSent) {
+        metaSent = true;
+        if (meta) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ __meta: true, ...meta })}\n\n`,
+            ),
+          );
+        }
+      }
+
       if (index < items.length) {
         // Small stagger between items for visual streaming effect
         if (stagger && index > 0) {
@@ -82,21 +99,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const { word, xAxis, yAxis } = await req.json();
+    const { word, xAxis, yAxis, skipCache } = await req.json();
 
     if (!word) {
-      return NextResponse.json(
-        { error: "Word is required" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Word is required" }, { status: 400 });
     }
 
     // ── Cache check ────────────────────────────────────────────────
     const cacheKey = `${word}|${xAxis}|${yAxis}`;
-    const cached = cacheGet<NuanceItem>(cacheKey);
-    if (cached) {
-      console.log(`Cache hit: ${cacheKey}`);
-      return createSSEStream(cached, false);
+    if (!skipCache) {
+      const cached = cacheGet<NuanceItem>(cacheKey);
+      if (cached) {
+        console.log(`Cache hit: ${cacheKey}`);
+        return createSSEStream(cached, false, { fromCache: true });
+      }
+    } else {
+      console.log(`Cache skip requested: ${cacheKey}`);
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY;
@@ -178,51 +196,83 @@ export async function POST(req: Request) {
       4. 同じような座標に複数の単語が集中しないこと。
     `;
 
-    const models = [
-      "openai/gpt-oss-120b:free",
+    const PRIORITY_MODEL = "openai/gpt-oss-120b:free";
+    const FALLBACK_MODELS = [
       "z-ai/glm-4.5-air:free",
       "deepseek/deepseek-r1-0528:free",
       "openrouter/free",
     ];
+    const PRIORITY_TIMEOUT_MS = 30_000;
 
-    // ── Race all models in parallel ──────────────────────────────────
-    const controllers = models.map(() => new AbortController());
+    // ── Helper: call a single model ──────────────────────────────────
+    function callModel(model: string, signal: AbortSignal) {
+      return openai.chat.completions
+        .create(
+          {
+            model,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are a helpful assistant that outputs strictly JSON.",
+              },
+              { role: "user", content: prompt },
+            ],
+          },
+          { signal },
+        )
+        .then((result) => {
+          const content = result.choices[0]?.message?.content;
+          if (!content) throw new Error(`${model}: empty content`);
+          const jsonStr = stripCodeFences(content);
+          const parsed = JSON.parse(jsonStr);
+          return normalizeItems(parsed);
+        });
+    }
 
-    const items = await Promise.any(
-      models.map((model, i) => {
-        console.log(`Racing model: ${model}`);
-        return openai.chat.completions
-          .create(
-            {
-              model: model,
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    "You are a helpful assistant that outputs strictly JSON.",
-                },
-                { role: "user", content: prompt },
-              ],
+    // ── Priority model first, fallback race only if it fails ─────────
+    const priorityController = new AbortController();
+    let items: NuanceItem[];
+
+    try {
+      console.log(`Priority model: ${PRIORITY_MODEL}`);
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Priority model timeout")),
+          PRIORITY_TIMEOUT_MS,
+        ),
+      );
+      items = await Promise.race([
+        callModel(PRIORITY_MODEL, priorityController.signal),
+        timeout,
+      ]);
+      console.log(`Winner: ${PRIORITY_MODEL} (${items.length} items)`);
+    } catch (err) {
+      priorityController.abort();
+      console.warn(
+        `Priority model failed: ${err instanceof Error ? err.message : err}. Racing fallbacks...`,
+      );
+
+      const fallbackControllers = FALLBACK_MODELS.map(
+        () => new AbortController(),
+      );
+      items = await Promise.any(
+        FALLBACK_MODELS.map((model, i) => {
+          console.log(`Racing fallback: ${model}`);
+          return callModel(model, fallbackControllers[i].signal).then(
+            (normalized) => {
+              console.log(
+                `Fallback winner: ${model} (${normalized.length} items)`,
+              );
+              for (let j = 0; j < fallbackControllers.length; j++) {
+                if (j !== i) fallbackControllers[j].abort();
+              }
+              return normalized;
             },
-            { signal: controllers[i].signal },
-          )
-          .then((result) => {
-            const content = result.choices[0]?.message?.content;
-            if (!content) throw new Error(`${model}: empty content`);
-
-            const jsonStr = stripCodeFences(content);
-            const parsed = JSON.parse(jsonStr);
-            const normalized = normalizeItems(parsed);
-
-            console.log(`Winner: ${model} (${normalized.length} items)`);
-            // Abort remaining in-flight requests
-            for (let j = 0; j < controllers.length; j++) {
-              if (j !== i) controllers[j].abort();
-            }
-            return normalized;
-          });
-      }),
-    );
+          );
+        }),
+      );
+    }
 
     // ── Cache result ─────────────────────────────────────────────────
     cacheSet(cacheKey, items);

@@ -45,6 +45,10 @@ export const en: Dictionary = {
   // Footer
   copyright: "© 2026 Nuance Mapper.",
 
+  // Cache
+  cachedResult: "Showing cached result",
+  regenerate: "Regenerate",
+
   // Errors
   errorGeneric: "An error occurred. Please try again.",
   errorRateLimit: "Too many requests. Please wait a moment.",
