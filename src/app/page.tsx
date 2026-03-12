@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 import { InputArea } from "@/components/InputArea";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import type { NuanceData } from "@/lib/types";
 import { I18nProvider, useDictionary } from "@/lib/i18n";
+import type { NuanceData } from "@/lib/types";
 
 const NuanceMap = dynamic(
   () => import("@/components/NuanceMap").then((m) => m.NuanceMap),
@@ -23,6 +24,12 @@ function HomeContent() {
   const { t } = useDictionary();
   const [data, setData] = useState<NuanceData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  const [lastQuery, setLastQuery] = useState<{
+    word: string;
+    xAxis: string;
+    yAxis: string;
+  } | null>(null);
   const [xAxisLabel, setXAxisLabel] = useState<string>(t.axisFormality);
   const [yAxisLabel, setYAxisLabel] = useState<string>(t.axisLiterary);
 
@@ -31,17 +38,24 @@ function HomeContent() {
     fetch("/api/generate", { method: "HEAD" }).catch(() => {});
   }, []);
 
-  const handleSearch = async (word: string, xAxis: string, yAxis: string) => {
+  const fetchData = async (
+    word: string,
+    xAxis: string,
+    yAxis: string,
+    skipCache = false,
+  ) => {
     setLoading(true);
     setXAxisLabel(xAxis);
     setYAxisLabel(yAxis);
     setData([]);
+    setFromCache(false);
+    setLastQuery({ word, xAxis, yAxis });
 
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ word, xAxis, yAxis }),
+        body: JSON.stringify({ word, xAxis, yAxis, skipCache }),
       });
 
       if (!response.ok) {
@@ -70,6 +84,11 @@ function HomeContent() {
             if (payload === "[DONE]") continue;
             try {
               const item = JSON.parse(payload);
+              // Handle metadata events
+              if (item.__meta) {
+                if (item.fromCache) setFromCache(true);
+                continue;
+              }
               setData((prev) => [...prev, item]);
             } catch {
               // ignore parse errors
@@ -89,6 +108,16 @@ function HomeContent() {
       alert(t.errorGeneric);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSearch = (word: string, xAxis: string, yAxis: string) => {
+    fetchData(word, xAxis, yAxis);
+  };
+
+  const handleRegenerate = () => {
+    if (lastQuery) {
+      fetchData(lastQuery.word, lastQuery.xAxis, lastQuery.yAxis, true);
     }
   };
 
@@ -127,6 +156,19 @@ function HomeContent() {
             yAxisLabel={yAxisLabel}
             isLoading={loading}
           />
+          {fromCache && !loading && data.length > 0 && (
+            <div className="mt-3 flex items-center justify-center gap-2 animate-in fade-in duration-300">
+              <span className="text-xs text-white/40">{t.cachedResult}</span>
+              <button
+                type="button"
+                onClick={handleRegenerate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-300 border border-amber-400/30 rounded-full bg-amber-400/10 hover:bg-amber-400/20 hover:border-amber-400/50 transition-all cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                {t.regenerate}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

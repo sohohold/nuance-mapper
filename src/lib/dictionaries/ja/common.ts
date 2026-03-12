@@ -43,6 +43,10 @@ export const ja = {
   // Footer
   copyright: "© 2026 Nuance Mapper.",
 
+  // Cache
+  cachedResult: "キャッシュから表示中",
+  regenerate: "再生成",
+
   // Errors
   errorGeneric: "エラーが発生しました。もう一度お試しください。",
   errorRateLimit: "リクエストが多すぎます。しばらくお待ちください。",
