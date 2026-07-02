@@ -16,6 +16,38 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Configuration
+
+Copy `.env.example` to `.env.local` and set the keys you have. All settings
+are optional — with no LLM key the API returns mock data.
+
+### LLM providers ($0 operation)
+
+The generate API tries providers in a hedged ladder, ordered by expected
+quality: **Gemini → Groq → Cerebras → OpenRouter `:free` models**. Only
+providers whose env key is set participate.
+
+| Env var | Provider | Free tier (approx.) |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | Google AI Studio (`gemini-2.5-flash`) | ~15 RPM / 1,000+ req/day |
+| `GROQ_API_KEY` | Groq (`llama-3.3-70b-versatile`) | 30 RPM / 1,000 req/day |
+| `CEREBRAS_API_KEY` | Cerebras (`gpt-oss-120b`) | 1M tokens/day |
+| `OPENROUTER_API_KEY` | OpenRouter `:free` ladder | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
+
+Each provider has its own independent daily quota, so every additional key
+multiplies availability while keeping the monthly cost at $0. Providers
+without a credit card on file physically cannot bill you.
+
+### Persistent cache
+
+Results are cached for **30 days**. Set Upstash Redis REST credentials
+(`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`, or the Vercel KV
+equivalents `KV_REST_API_URL` / `KV_REST_API_TOKEN`) to persist the cache
+across serverless instances and cold starts — cache hits consume zero
+upstream quota. Without Redis, the cache falls back to per-instance
+memory + local disk. When every provider is rate-limited, a cached result
+is served (marked degraded) instead of failing.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
