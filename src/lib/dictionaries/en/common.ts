@@ -47,6 +47,7 @@ export const en: Dictionary = {
   // Cache
   cachedResult: "Showing cached result",
   regenerate: "Regenerate",
+  degradedResult: "Result may be lower quality",
 
   // Errors
   errorGeneric: "An error occurred. Please try again.",
