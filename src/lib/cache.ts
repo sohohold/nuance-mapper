@@ -13,6 +13,9 @@ const CACHE_MAX = 200;
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const TTL_SECONDS = Math.floor(TTL_MS / 1000);
 const REDIS_PREFIX = "nuance:v1:";
+// A stalled Redis endpoint must degrade to a quick cache miss, not block
+// generation until the platform/function timeout
+const REDIS_TIMEOUT_MS = 2_000;
 
 // ── Upstash Redis (REST) backend ─────────────────────────────────────
 // Preferred when configured: survives serverless cold starts and is
@@ -31,7 +34,10 @@ async function redisGet(key: string): Promise<unknown[] | undefined> {
   if (!config) return undefined;
   const res = await fetch(
     `${config.url}/get/${encodeURIComponent(REDIS_PREFIX + key)}`,
-    { headers: { Authorization: `Bearer ${config.token}` } },
+    {
+      headers: { Authorization: `Bearer ${config.token}` },
+      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
+    },
   );
   if (!res.ok) throw new Error(`Redis GET failed: ${res.status}`);
   const data = (await res.json()) as { result: string | null };
@@ -48,6 +54,7 @@ async function redisSet(key: string, value: unknown[]): Promise<void> {
       method: "POST",
       headers: { Authorization: `Bearer ${config.token}` },
       body: JSON.stringify(value),
+      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
     },
   );
   if (!res.ok) throw new Error(`Redis SET failed: ${res.status}`);
