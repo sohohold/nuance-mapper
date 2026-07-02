@@ -21,22 +21,22 @@ class AllModelsFailedError extends Error {
 }
 
 // ── Model ladder across independent free tiers ───────────────────────
-// Every OpenRouter `:free` model drains the same per-account daily pool,
-// so extra OpenRouter rungs add failover but no quota. Rungs from other
-// providers each bring their own daily quota — configure any subset via
-// env keys; unset providers are skipped. Ordered by expected quality.
+// Rungs from different providers each bring their own daily quota —
+// configure any subset via env keys; unset providers are skipped.
+// OpenRouter is a single rung: all its `:free` models share one
+// per-account daily pool, so extra OpenRouter rungs add no quota.
 interface ModelCandidate {
   provider: string;
   baseURL: string;
   apiKey: string;
-  model: string;
-  // Disables hybrid-reasoning (thinking) mode via OpenRouter's `reasoning`
-  // param — much faster, same JSON. OpenRouter rungs only.
-  noThink?: boolean;
+  // Latency/throughput-ordered preference list. The first entry the
+  // provider's live /models endpoint currently serves is used, so
+  // deprecations and renames degrade to the next rung instead of 404s.
+  models: string[];
 }
 
 function candidateLabel(c: ModelCandidate): string {
-  return `${c.provider}:${c.model}`;
+  return `${c.provider}:${c.models[0]}`;
 }
 
 function buildCandidates(): ModelCandidate[] {
@@ -47,7 +47,14 @@ function buildCandidates(): ModelCandidate[] {
       provider: "gemini",
       baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: gemini,
-      model: "gemini-2.5-flash",
+      // The rolling -latest aliases always track Google's current
+      // fastest Flash generation; pinned ids are the safety net
+      models: [
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+      ],
     });
   }
   const groq = process.env.GROQ_API_KEY;
@@ -56,7 +63,11 @@ function buildCandidates(): ModelCandidate[] {
       provider: "groq",
       baseURL: "https://api.groq.com/openai/v1",
       apiKey: groq,
-      model: "llama-3.3-70b-versatile",
+      models: [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "llama-3.3-70b-versatile",
+      ],
     });
   }
   const cerebras = process.env.CEREBRAS_API_KEY;
@@ -65,25 +76,67 @@ function buildCandidates(): ModelCandidate[] {
       provider: "cerebras",
       baseURL: "https://api.cerebras.ai/v1",
       apiKey: cerebras,
-      model: "gpt-oss-120b",
+      models: ["gpt-oss-120b", "zai-glm-4.7", "qwen-3-32b", "llama-3.3-70b"],
     });
   }
   const openrouter = process.env.OPENROUTER_API_KEY;
   if (openrouter) {
-    const base = {
+    out.push({
       provider: "openrouter",
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: openrouter,
-    };
-    out.push(
-      { ...base, model: "openai/gpt-oss-120b:free" },
-      { ...base, model: "z-ai/glm-4.5-air:free", noThink: true },
-      { ...base, model: "deepseek/deepseek-chat-v3.1:free", noThink: true },
-      { ...base, model: "meta-llama/llama-3.3-70b-instruct:free" },
-      { ...base, model: "openrouter/free" },
-    );
+      models: ["openai/gpt-oss-120b:free"],
+    });
   }
   return out;
+}
+
+// ── Dynamic model resolution ─────────────────────────────────────────
+// Free-tier providers deprecate and rename their fast models often, so
+// instead of pinning one id, ask the provider which of our preferred
+// models it currently serves and take the first (fastest) match.
+const MODEL_RESOLVE_TIMEOUT_MS = 2_000;
+const MODEL_RESOLVE_TTL_MS = 60 * 60 * 1000;
+// Shorter re-check when the lookup failed or nothing matched
+const MODEL_RESOLVE_RETRY_MS = 5 * 60 * 1000;
+const resolvedModels = new Map<string, { model: string; expiresAt: number }>();
+
+async function resolveModel(c: ModelCandidate): Promise<string> {
+  if (c.models.length === 1) return c.models[0];
+  const cached = resolvedModels.get(c.provider);
+  if (cached && Date.now() < cached.expiresAt) return cached.model;
+  // If the refresh fails or matches nothing, a stale last-known-good
+  // resolution beats blindly retrying the head of the list, which may be
+  // exactly the model whose absence demoted us in the first place
+  let model = cached?.model ?? c.models[0];
+  let ttl = MODEL_RESOLVE_RETRY_MS;
+  try {
+    const res = await fetch(`${c.baseURL.replace(/\/+$/, "")}/models`, {
+      headers: { Authorization: `Bearer ${c.apiKey}` },
+      signal: AbortSignal.timeout(MODEL_RESOLVE_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as { data?: { id?: string }[] };
+    // Gemini's OpenAI-compat layer prefixes ids with "models/"
+    const available = new Set(
+      (data.data ?? []).map((m) => String(m.id ?? "").replace(/^models\//, "")),
+    );
+    const found = c.models.find((m) => available.has(m));
+    if (found) {
+      model = found;
+      ttl = MODEL_RESOLVE_TTL_MS;
+    } else {
+      console.warn(
+        `${c.provider}: none of the preferred models are listed — trying ${model}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `${c.provider}: model resolution failed (${err}) — trying ${model}`,
+    );
+  }
+  resolvedModels.set(c.provider, { model, expiresAt: Date.now() + ttl });
+  return model;
 }
 
 // ── SSE helpers ──────────────────────────────────────────────────────
@@ -361,48 +414,28 @@ export async function POST(req: Request) {
       candidate: ModelCandidate,
       signal: AbortSignal,
     ): Promise<NuanceItem[]> {
-      const label = candidateLabel(candidate);
-      const attempt = (disableThinking: boolean) => {
-        const params = {
-          model: candidate.model,
+      const model = await resolveModel(candidate);
+      const label = `${candidate.provider}:${model}`;
+      if (model !== candidate.models[0]) {
+        console.log(`Resolved model for ${candidate.provider}: ${model}`);
+      }
+      const result = await clientFor(candidate).chat.completions.create(
+        {
+          model,
           messages: [
             {
-              role: "system" as const,
+              role: "system",
               content:
                 "You are a helpful assistant that outputs strictly JSON.",
             },
-            { role: "user" as const, content: prompt },
+            { role: "user", content: prompt },
           ],
-          ...(disableThinking ? { reasoning: { enabled: false } } : {}),
-        };
-        return clientFor(candidate)
-          .chat.completions.create(
-            params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-            { signal },
-          )
-          .then((result) => {
-            const content = result.choices[0]?.message?.content;
-            if (!content) throw new Error(`${label}: empty content`);
-            return sanitizeItems(parseModelContent(content), AXIS_MAX_VAL);
-          });
-      };
-      try {
-        return await attempt(Boolean(candidate.noThink));
-      } catch (err) {
-        // Some providers reject the reasoning param — retry once without it,
-        // but only when the error actually points at that param (never after
-        // an abort, and not for unrelated 400s)
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          candidate.noThink &&
-          !signal.aborted &&
-          /reasoning/i.test(message)
-        ) {
-          console.warn(`${label}: retrying without reasoning param`);
-          return attempt(false);
-        }
-        throw err;
-      }
+        },
+        { signal },
+      );
+      const content = result.choices[0]?.message?.content;
+      if (!content) throw new Error(`${label}: empty content`);
+      return sanitizeItems(parseModelContent(content), AXIS_MAX_VAL);
     }
 
     // ── Hedged race: first *valid* result wins ────────────────────────
