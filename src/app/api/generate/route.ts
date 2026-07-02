@@ -238,13 +238,14 @@ export async function POST(req: Request) {
     }
 
     // ── Cache check ────────────────────────────────────────────────
-    // Normalized key (NFKC/trim/lowercase) so trivial input variants hit
+    // Normalized key (NFKC/trim) so trivial input variants hit. Case is
+    // preserved: the prompt sees the original spelling, and "Apple" and
+    // "apple" are different generations
     cacheKey = [word, xAxis, yAxis]
       .map((s) =>
         String(s ?? "")
           .normalize("NFKC")
-          .trim()
-          .toLowerCase(),
+          .trim(),
       )
       .join("|");
     if (!skipCache) {
@@ -455,12 +456,12 @@ export async function POST(req: Request) {
           );
           timeoutTimers.push(timeoutTimer);
 
-          const onFailure = (message: string) => {
+          const onFailure = (message: string, rateLimited = false) => {
             console.warn(`Model failed: ${label}: ${message}`);
             failed++;
             if (settled) return;
             errors.push(`${label}: ${message}`);
-            if (!/^429\b/.test(message)) allRateLimited = false;
+            if (!rateLimited) allRateLimited = false;
             if (failed === candidates.length) {
               clearTimers();
               if (bestEffort.length >= 3) {
@@ -502,9 +503,13 @@ export async function POST(req: Request) {
               });
               resolve({ items: sanitized, degraded: false });
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
               clearTimeout(timeoutTimer);
-              onFailure(err instanceof Error ? err.message : String(err));
+              const message = err instanceof Error ? err.message : String(err);
+              // Prefer the SDK's structured status over parsing the message,
+              // which not every provider/SDK version prefixes with the code
+              const status = (err as { status?: unknown } | null)?.status;
+              onFailure(message, status === 429 || /^429\b/.test(message));
             });
 
           if (started < candidates.length) {

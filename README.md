@@ -35,8 +35,11 @@ providers whose env key is set participate.
 | `OPENROUTER_API_KEY` | OpenRouter `:free` ladder | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
 
 Each provider has its own independent daily quota, so every additional key
-multiplies availability while keeping the monthly cost at $0. Providers
-without a credit card on file physically cannot bill you.
+multiplies availability. To guarantee $0, use keys from accounts **without
+billing enabled** (no credit card on file) — those cannot be charged; once
+the free quota runs out, requests fail and the ladder moves on. Note that
+the Gemini/Groq/Cerebras rungs use normal metered model IDs, so a key from
+a billing-enabled account may incur charges beyond the free tier.
 
 ### Persistent cache
 
