@@ -84,6 +84,55 @@ function stripCodeFences(str: string): string {
   return s;
 }
 
+// ── Parse model output (tolerates <think> blocks and stray prose) ────
+function parseModelContent(content: string): NuanceItem[] {
+  const s = stripCodeFences(
+    content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
+  );
+  try {
+    return normalizeItems(JSON.parse(s));
+  } catch {
+    const start = s.indexOf("[");
+    const end = s.lastIndexOf("]");
+    if (start === -1 || end <= start) throw new Error("No JSON array found");
+    return normalizeItems(JSON.parse(s.slice(start, end + 1)));
+  }
+}
+
+// ── Quality gate: reject sparse or degenerate results ────────────────
+const MIN_ITEMS = 12;
+const MIN_QUADRANTS = 3;
+
+function validateItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
+  const seen = new Set<string>();
+  const out: NuanceItem[] = [];
+  for (const item of items) {
+    if (typeof item?.word !== "string" || !item.word.trim()) continue;
+    const x = Number(item.x);
+    const y = Number(item.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const word = item.word.trim();
+    if (seen.has(word)) continue;
+    seen.add(word);
+    out.push({
+      word,
+      x: Math.max(-axisMax, Math.min(axisMax, x)),
+      y: Math.max(-axisMax, Math.min(axisMax, y)),
+      nuance: typeof item.nuance === "string" ? item.nuance : "",
+    });
+  }
+  if (out.length < MIN_ITEMS) {
+    throw new Error(`Low quality: only ${out.length} valid items`);
+  }
+  const quadrants = new Set(
+    out.map((i) => `${i.x >= 0 ? "R" : "L"}${i.y >= 0 ? "T" : "B"}`),
+  );
+  if (quadrants.size < MIN_QUADRANTS) {
+    throw new Error(`Low quality: items cover only ${quadrants.size} quadrants`);
+  }
+  return out;
+}
+
 export async function POST(req: Request) {
   try {
     // ── Rate limit (10 requests per minute per IP) ───────────────
@@ -196,83 +245,104 @@ export async function POST(req: Request) {
       4. 同じような座標に複数の単語が集中しないこと。
     `;
 
-    const PRIORITY_MODEL = "openai/gpt-oss-120b:free";
-    const FALLBACK_MODELS = [
-      "z-ai/glm-4.5-air:free",
-      "deepseek/deepseek-r1-0528:free",
-      "openrouter/free",
+    // Ordered by expected quality. `noThink` disables hybrid-reasoning
+    // (thinking) mode on models that support it — much faster, same JSON.
+    const MODELS: { id: string; noThink?: boolean }[] = [
+      { id: "openai/gpt-oss-120b:free" },
+      { id: "z-ai/glm-4.5-air:free", noThink: true },
+      { id: "deepseek/deepseek-chat-v3.1:free", noThink: true },
+      { id: "meta-llama/llama-3.3-70b-instruct:free" },
+      { id: "openrouter/free" },
     ];
-    const PRIORITY_TIMEOUT_MS = 30_000;
+    // Hedged requests: start the next candidate only if the previous one
+    // hasn't answered within this window (or failed). Keeps free-tier
+    // request usage low (usually 1-2 calls) while bounding latency.
+    const HEDGE_STAGGER_MS = 7_000;
 
     // ── Helper: call a single model ──────────────────────────────────
-    function callModel(model: string, signal: AbortSignal) {
+    function callModel(
+      model: string,
+      noThink: boolean | undefined,
+      signal: AbortSignal,
+    ) {
+      const params = {
+        model,
+        messages: [
+          {
+            role: "system" as const,
+            content: "You are a helpful assistant that outputs strictly JSON.",
+          },
+          { role: "user" as const, content: prompt },
+        ],
+        ...(noThink ? { reasoning: { enabled: false } } : {}),
+      };
       return openai.chat.completions
         .create(
-          {
-            model,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are a helpful assistant that outputs strictly JSON.",
-              },
-              { role: "user", content: prompt },
-            ],
-          },
+          params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
           { signal },
         )
         .then((result) => {
           const content = result.choices[0]?.message?.content;
           if (!content) throw new Error(`${model}: empty content`);
-          const jsonStr = stripCodeFences(content);
-          const parsed = JSON.parse(jsonStr);
-          return normalizeItems(parsed);
+          return validateItems(parseModelContent(content), AXIS_MAX_VAL);
         });
     }
 
-    // ── Priority model first, fallback race only if it fails ─────────
-    const priorityController = new AbortController();
-    let items: NuanceItem[];
+    // ── Hedged race: first *valid* result wins ────────────────────────
+    function hedgedGenerate(): Promise<NuanceItem[]> {
+      return new Promise((resolve, reject) => {
+        const controllers: AbortController[] = [];
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        let started = 0;
+        let failed = 0;
+        let settled = false;
+        const errors: string[] = [];
 
-    try {
-      console.log(`Priority model: ${PRIORITY_MODEL}`);
-      const timeout = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Priority model timeout")),
-          PRIORITY_TIMEOUT_MS,
-        ),
-      );
-      items = await Promise.race([
-        callModel(PRIORITY_MODEL, priorityController.signal),
-        timeout,
-      ]);
-      console.log(`Winner: ${PRIORITY_MODEL} (${items.length} items)`);
-    } catch (err) {
-      priorityController.abort();
-      console.warn(
-        `Priority model failed: ${err instanceof Error ? err.message : err}. Racing fallbacks...`,
-      );
+        const startNext = () => {
+          if (settled || started >= MODELS.length) return;
+          const index = started++;
+          const { id, noThink } = MODELS[index];
+          console.log(`Trying model: ${id}`);
+          const controller = new AbortController();
+          controllers.push(controller);
 
-      const fallbackControllers = FALLBACK_MODELS.map(
-        () => new AbortController(),
-      );
-      items = await Promise.any(
-        FALLBACK_MODELS.map((model, i) => {
-          console.log(`Racing fallback: ${model}`);
-          return callModel(model, fallbackControllers[i].signal).then(
-            (normalized) => {
-              console.log(
-                `Fallback winner: ${model} (${normalized.length} items)`,
-              );
-              for (let j = 0; j < fallbackControllers.length; j++) {
-                if (j !== i) fallbackControllers[j].abort();
+          callModel(id, noThink, controller.signal)
+            .then((validated) => {
+              if (settled) return;
+              settled = true;
+              console.log(`Winner: ${id} (${validated.length} items)`);
+              for (const t of timers) clearTimeout(t);
+              controllers.forEach((c, j) => {
+                if (j !== index) c.abort();
+              });
+              resolve(validated);
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.warn(`Model failed: ${id}: ${message}`);
+              errors.push(`${id}: ${message}`);
+              failed++;
+              if (settled) return;
+              if (failed === MODELS.length) {
+                reject(
+                  new Error(`All models failed. ${errors.join(" / ")}`),
+                );
+              } else if (failed === started) {
+                // Everything in flight already failed — don't wait out the stagger
+                startNext();
               }
-              return normalized;
-            },
-          );
-        }),
-      );
+            });
+
+          if (started < MODELS.length) {
+            timers.push(setTimeout(startNext, HEDGE_STAGGER_MS));
+          }
+        };
+
+        startNext();
+      });
     }
+
+    const items = await hedgedGenerate();
 
     // ── Cache result ─────────────────────────────────────────────────
     cacheSet(cacheKey, items);

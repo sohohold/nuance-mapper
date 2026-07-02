@@ -27,7 +27,22 @@ interface NuanceMapProps {
   isLoading?: boolean;
 }
 
-const SCALE = 50;
+// px per coordinate unit — compressed on mobile so labels render larger
+// relative to the point spread after fitView
+const SCALE_DESKTOP = 50;
+const SCALE_MOBILE = 20;
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return isMobile;
+}
 
 // Custom Node for displaying words
 const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
@@ -49,11 +64,11 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
     >
       <div
         className={cn(
-          "w-3 h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover:scale-150",
+          "w-4 h-4 sm:w-3 sm:h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover:scale-150",
           getColorClass(firstItem.x, firstItem.y),
         )}
       />
-      <div className="mt-1 text-white/90 text-[11px] font-medium whitespace-nowrap pointer-events-none select-none px-1.5 py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
+      <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap pointer-events-none select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
         {firstItem.word}
         {items.length > 1 && (
           <span className="ml-1 opacity-70 border-l border-white/30 pl-1">
@@ -72,8 +87,9 @@ const ORIGIN_CENTER = ORIGIN_SIZE / 2;
 const OriginNode = ({
   data,
 }: {
-  data: { xAxisLabel: string; yAxisLabel: string };
+  data: { xAxisLabel: string; yAxisLabel: string; scale: number };
 }) => {
+  const scale = data.scale;
   // Generate tick marks from -10 to 10
   const ticks = Array.from({ length: 21 }, (_, i) => i - 10);
 
@@ -112,8 +128,8 @@ const OriginNode = ({
       {/* Ticks and Distance Labels */}
       {ticks.map((tick) => {
         if (tick === 0) return null;
-        const xTickPos = ORIGIN_CENTER + tick * SCALE;
-        const yTickPos = ORIGIN_CENTER - tick * SCALE;
+        const xTickPos = ORIGIN_CENTER + tick * scale;
+        const yTickPos = ORIGIN_CENTER - tick * scale;
         return (
           <div key={`tick-${tick}`}>
             {/* X-axis tick */}
@@ -122,7 +138,7 @@ const OriginNode = ({
               style={{ left: xTickPos - 1, top: ORIGIN_CENTER - 6 }}
             >
               <div className="w-[2px] h-3 bg-white/40" />
-              <div className="mt-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
+              <div className="mt-1.5 text-white/50 text-[14px] sm:text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
                 {tick > 0 ? `+${tick}` : tick}
               </div>
             </div>
@@ -133,7 +149,7 @@ const OriginNode = ({
               style={{ left: ORIGIN_CENTER - 6, top: yTickPos - 1 }}
             >
               <div className="h-[2px] w-3 bg-white/40" />
-              <div className="ml-1.5 text-white/50 text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
+              <div className="ml-1.5 text-white/50 text-[14px] sm:text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
                 {tick > 0 ? `+${tick}` : tick}
               </div>
             </div>
@@ -143,14 +159,14 @@ const OriginNode = ({
 
       {/* Axis Labels */}
       <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-y-1/2"
-        style={{ top: ORIGIN_CENTER, left: ORIGIN_CENTER + 6 * SCALE }}
+        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-y-1/2"
+        style={{ top: ORIGIN_CENTER, left: ORIGIN_CENTER + 6 * scale }}
       >
         {data.xAxisLabel} (+X)
       </div>
       <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-x-1/2"
-        style={{ left: ORIGIN_CENTER, top: ORIGIN_CENTER - 6 * SCALE }}
+        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-x-1/2"
+        style={{ left: ORIGIN_CENTER, top: ORIGIN_CENTER - 6 * scale }}
       >
         {data.yAxisLabel} (+Y)
       </div>
@@ -166,6 +182,8 @@ const nodeTypes = {
 function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMapProps) {
   const { t } = useDictionary();
   const { fitView } = useReactFlow();
+  const isMobile = useIsMobile();
+  const scale = isMobile ? SCALE_MOBILE : SCALE_DESKTOP;
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
@@ -180,7 +198,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
     outNodes.push({
       id: "origin",
       position: { x: 0, y: 0 },
-      data: { xAxisLabel, yAxisLabel },
+      data: { xAxisLabel, yAxisLabel, scale },
       type: "originNode",
       selectable: false,
       draggable: false,
@@ -208,7 +226,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
       outNodes.push({
         id: `word-${i}`,
         // -y because React Flow's canvas is Y-down, but cartesian data coordinates are Y-up
-        position: { x: group.x * SCALE, y: -group.y * SCALE },
+        position: { x: group.x * scale, y: -group.y * scale },
         data: { items: group.items },
         type: "wordNode",
         draggable: false,
@@ -218,18 +236,22 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
     });
 
     return outNodes;
-  }, [data, xAxisLabel, yAxisLabel]);
+  }, [data, xAxisLabel, yAxisLabel, scale]);
 
   // Debounced fitView — settles after items stop arriving (streaming)
   useEffect(() => {
     const wordNodes = nodes.filter((n) => n.type === "wordNode");
     if (wordNodes.length > 0) {
       const timer = setTimeout(() => {
-        fitView({ nodes: wordNodes, duration: 800, padding: 0.2 });
+        fitView({
+          nodes: wordNodes,
+          duration: 800,
+          padding: isMobile ? 0.1 : 0.2,
+        });
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [nodes, fitView]);
+  }, [nodes, fitView, isMobile]);
 
   const onNodeMouseEnter = useCallback(
     (event: React.MouseEvent, node: Node) => {
@@ -289,7 +311,7 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneMouseEnter={() => setHoverInfo(null)}
         onMoveStart={() => setHoverInfo(null)}
-        minZoom={0.5}
+        minZoom={isMobile ? 0.25 : 0.5}
         maxZoom={4}
         proOptions={{ hideAttribution: true }}
         className="transition-cursor cursor-grab active:cursor-grabbing"
@@ -298,13 +320,13 @@ function NuanceMapContent({ data, xAxisLabel, yAxisLabel, isLoading }: NuanceMap
         elementsSelectable={false}
       >
         <Background
-          gap={SCALE}
+          gap={scale}
           color="rgba(255,255,255,0.5)"
           variant={BackgroundVariant.Dots}
         />
         <Controls className="bg-white/10! backdrop-blur-md! border-white/20! [&>button]:bg-transparent! [&>button]:border-b-white/20! [&>button]:text-white! hover:[&>button]:bg-white/20!" />
         <MiniMap
-          className="bg-black/20! backdrop-blur-md! border-white/10! rounded-xl!"
+          className="hidden! sm:block! bg-black/20! backdrop-blur-md! border-white/10! rounded-xl!"
           maskColor="rgba(0,0,0,0.4)"
           nodeColor={(node) => {
             const d = (node.data as { items?: NuanceData[] }).items?.[0];

@@ -134,13 +134,10 @@ function HomeContent() {
         </div>
 
         {/* Header */}
-        <div className="text-center space-y-4">
+        <div className="text-center">
           <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
             {t.title}
           </h1>
-          <p className="text-white/60 text-lg md:text-xl font-light tracking-wide max-w-lg mx-auto">
-            {t.subtitle}
-          </p>
         </div>
 
         {/* Input Section */}
