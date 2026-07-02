@@ -23,16 +23,19 @@ are optional — with no LLM key the API returns mock data.
 
 ### LLM providers ($0 operation)
 
-The generate API tries providers in a hedged ladder, ordered by expected
-quality: **Gemini → Groq → Cerebras → OpenRouter `:free` models**. Only
-providers whose env key is set participate.
+The generate API tries providers in a hedged ladder:
+**Gemini → Groq → Cerebras → OpenRouter**. Only providers whose env key is
+set participate. For Gemini/Groq/Cerebras the concrete model is picked at
+runtime: each rung has a latency/throughput-ordered preference list that is
+matched against the provider's live `/models` endpoint (cached for 1 hour),
+so deprecated or renamed models degrade gracefully instead of 404ing.
 
-| Env var | Provider | Free tier (approx.) |
-| --- | --- | --- |
-| `GEMINI_API_KEY` | Google AI Studio (`gemini-2.5-flash`) | ~15 RPM / 1,000+ req/day |
-| `GROQ_API_KEY` | Groq (`llama-3.3-70b-versatile`) | 30 RPM / 1,000 req/day |
-| `CEREBRAS_API_KEY` | Cerebras (`gpt-oss-120b`) | 1M tokens/day |
-| `OPENROUTER_API_KEY` | OpenRouter `:free` ladder | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
+| Env var | Provider | Preferred models (fastest first) | Free tier (approx.) |
+| --- | --- | --- | --- |
+| `GEMINI_API_KEY` | Google AI Studio | `gemini-flash-lite-latest` → `gemini-flash-latest` → pinned 2.5 ids | ~15 RPM / 1,000+ req/day |
+| `GROQ_API_KEY` | Groq | `openai/gpt-oss-120b` → `openai/gpt-oss-20b` → `llama-3.3-70b-versatile` | 30 RPM / 1,000 req/day |
+| `CEREBRAS_API_KEY` | Cerebras | `gpt-oss-120b` → `zai-glm-4.7` → `qwen-3-32b` → `llama-3.3-70b` | 1M tokens/day |
+| `OPENROUTER_API_KEY` | OpenRouter | `openai/gpt-oss-120b:free` only (all `:free` models share one daily pool) | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
 
 Each provider has its own independent daily quota, so every additional key
 multiplies availability. To guarantee $0, use keys from accounts **without
