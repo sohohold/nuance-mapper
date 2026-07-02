@@ -10,11 +10,21 @@ interface NuanceItem {
   nuance: string;
 }
 
+class AllModelsFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly allRateLimited: boolean,
+  ) {
+    super(message);
+    this.name = "AllModelsFailedError";
+  }
+}
+
 // ── SSE helpers ──────────────────────────────────────────────────────
 function createSSEStream(
   items: NuanceItem[],
   stagger: boolean,
-  meta?: { fromCache?: boolean },
+  meta?: { fromCache?: boolean; degraded?: boolean },
 ): Response {
   const encoder = new TextEncoder();
   let index = 0;
@@ -302,10 +312,11 @@ export async function POST(req: Request) {
       try {
         return await attempt(Boolean(noThink));
       } catch (err) {
-        // Some providers reject the reasoning param with a 400 — retry
-        // once without it (never after an abort)
+        // Some providers reject the reasoning param — retry once without it,
+        // but only when the error actually points at that param (never after
+        // an abort, and not for unrelated 400s)
         const message = err instanceof Error ? err.message : String(err);
-        if (noThink && !signal.aborted && /^400|reasoning/i.test(message)) {
+        if (noThink && !signal.aborted && /reasoning/i.test(message)) {
           console.warn(`${model}: retrying without reasoning param`);
           return attempt(false);
         }
@@ -333,6 +344,8 @@ export async function POST(req: Request) {
         // Largest sanitized result that failed the quality gate — returned
         // as a best effort if no model passes, instead of erroring out
         let bestEffort: NuanceItem[] = [];
+        // True only while every recorded failure is an upstream 429
+        let allRateLimited = true;
 
         const clearTimers = () => {
           if (staggerTimer) {
@@ -366,6 +379,7 @@ export async function POST(req: Request) {
             failed++;
             if (settled) return;
             errors.push(`${id}: ${message}`);
+            if (!/^429\b/.test(message)) allRateLimited = false;
             if (failed === MODELS.length) {
               clearTimers();
               if (bestEffort.length >= 3) {
@@ -374,7 +388,12 @@ export async function POST(req: Request) {
                 );
                 resolve({ items: bestEffort, degraded: true });
               } else {
-                reject(new Error(`All models failed. ${errors.join(" / ")}`));
+                reject(
+                  new AllModelsFailedError(
+                    `All models failed. ${errors.join(" / ")}`,
+                    allRateLimited,
+                  ),
+                );
               }
             } else if (failed === started) {
               // Everything in flight already failed — don't wait out the stagger
@@ -425,7 +444,7 @@ export async function POST(req: Request) {
       cacheSet(cacheKey, items);
     }
 
-    return createSSEStream(items, true);
+    return createSSEStream(items, true, degraded ? { degraded } : undefined);
   } catch (error: unknown) {
     console.error("Error generating nuances:", error);
     if (error instanceof Error && "response" in error) {
@@ -437,7 +456,8 @@ export async function POST(req: Request) {
     console.error("API Key present:", !!process.env.OPENROUTER_API_KEY);
     const message = error instanceof Error ? error.message : "Unknown error";
     // Free-tier quota exhausted upstream — tell the client to back off
-    if (message.startsWith("All models failed") && message.includes("429")) {
+    // (only when every model failed with a 429)
+    if (error instanceof AllModelsFailedError && error.allRateLimited) {
       return NextResponse.json(
         { error: "Upstream rate limited", details: message, retryAfter: 60 },
         { status: 429, headers: { "Retry-After": "60" } },

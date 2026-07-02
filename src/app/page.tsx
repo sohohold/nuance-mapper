@@ -25,6 +25,7 @@ function HomeContent() {
   const [data, setData] = useState<NuanceData[]>([]);
   const [loading, setLoading] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [degraded, setDegraded] = useState(false);
   const [lastQuery, setLastQuery] = useState<{
     word: string;
     xAxis: string;
@@ -49,6 +50,7 @@ function HomeContent() {
     setYAxisLabel(yAxis);
     setData([]);
     setFromCache(false);
+    setDegraded(false);
     setLastQuery({ word, xAxis, yAxis });
 
     try {
@@ -87,6 +89,7 @@ function HomeContent() {
               // Handle metadata events
               if (item.__meta) {
                 if (item.fromCache) setFromCache(true);
+                if (item.degraded) setDegraded(true);
                 continue;
               }
               setData((prev) => [...prev, item]);
@@ -157,9 +160,15 @@ function HomeContent() {
             yAxisLabel={yAxisLabel}
             isLoading={loading}
           />
-          {fromCache && !loading && data.length > 0 && (
+          {(fromCache || degraded) && !loading && data.length > 0 && (
             <div className="mt-3 flex items-center justify-center gap-2 animate-in fade-in duration-300">
-              <span className="text-xs text-white/40">{t.cachedResult}</span>
+              <span
+                className={
+                  degraded ? "text-xs text-amber-300/80" : "text-xs text-white/40"
+                }
+              >
+                {degraded ? t.degradedResult : t.cachedResult}
+              </span>
               <button
                 type="button"
                 onClick={handleRegenerate}

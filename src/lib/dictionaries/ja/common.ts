@@ -45,6 +45,7 @@ export const ja = {
   // Cache
   cachedResult: "キャッシュから表示中",
   regenerate: "再生成",
+  degradedResult: "生成品質が低い可能性があります",
 
   // Errors
   errorGeneric: "エラーが発生しました。もう一度お試しください。",
