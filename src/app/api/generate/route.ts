@@ -258,6 +258,8 @@ export async function POST(req: Request) {
     // hasn't answered within this window (or failed). Keeps free-tier
     // request usage low (usually 1-2 calls) while bounding latency.
     const HEDGE_STAGGER_MS = 7_000;
+    // Abort a model that neither answers nor fails, so the hedge always settles
+    const MODEL_TIMEOUT_MS = 25_000;
 
     // ── Helper: call a single model ──────────────────────────────────
     function callModel(
@@ -292,41 +294,65 @@ export async function POST(req: Request) {
     function hedgedGenerate(): Promise<NuanceItem[]> {
       return new Promise((resolve, reject) => {
         const controllers: AbortController[] = [];
-        const timers: ReturnType<typeof setTimeout>[] = [];
+        const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
+        // Single pending stagger timer — cleared on every start so an
+        // immediate failover never leaves a stale timer that would launch
+        // extra models later
+        let staggerTimer: ReturnType<typeof setTimeout> | null = null;
         let started = 0;
         let failed = 0;
         let settled = false;
         const errors: string[] = [];
 
+        const clearTimers = () => {
+          if (staggerTimer) {
+            clearTimeout(staggerTimer);
+            staggerTimer = null;
+          }
+          for (const t of timeoutTimers) clearTimeout(t);
+        };
+
         const startNext = () => {
           if (settled || started >= MODELS.length) return;
+          if (staggerTimer) {
+            clearTimeout(staggerTimer);
+            staggerTimer = null;
+          }
           const index = started++;
           const { id, noThink } = MODELS[index];
           console.log(`Trying model: ${id}`);
           const controller = new AbortController();
           controllers.push(controller);
 
+          // Abort stalled calls so `failed` can always reach MODELS.length
+          const timeoutTimer = setTimeout(
+            () => controller.abort(),
+            MODEL_TIMEOUT_MS,
+          );
+          timeoutTimers.push(timeoutTimer);
+
           callModel(id, noThink, controller.signal)
             .then((validated) => {
+              clearTimeout(timeoutTimer);
               if (settled) return;
               settled = true;
               console.log(`Winner: ${id} (${validated.length} items)`);
-              for (const t of timers) clearTimeout(t);
+              clearTimers();
               controllers.forEach((c, j) => {
                 if (j !== index) c.abort();
               });
               resolve(validated);
             })
             .catch((err) => {
+              clearTimeout(timeoutTimer);
               const message = err instanceof Error ? err.message : String(err);
               console.warn(`Model failed: ${id}: ${message}`);
-              errors.push(`${id}: ${message}`);
               failed++;
               if (settled) return;
+              errors.push(`${id}: ${message}`);
               if (failed === MODELS.length) {
-                reject(
-                  new Error(`All models failed. ${errors.join(" / ")}`),
-                );
+                clearTimers();
+                reject(new Error(`All models failed. ${errors.join(" / ")}`));
               } else if (failed === started) {
                 // Everything in flight already failed — don't wait out the stagger
                 startNext();
@@ -334,7 +360,7 @@ export async function POST(req: Request) {
             });
 
           if (started < MODELS.length) {
-            timers.push(setTimeout(startNext, HEDGE_STAGGER_MS));
+            staggerTimer = setTimeout(startNext, HEDGE_STAGGER_MS);
           }
         };
 
