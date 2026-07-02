@@ -314,7 +314,11 @@ export async function POST(req: Request) {
     }
 
     // ── Hedged race: first *valid* result wins ────────────────────────
-    function hedgedGenerate(): Promise<NuanceItem[]> {
+    // `degraded` marks a best-effort result that missed the quality gate
+    function hedgedGenerate(): Promise<{
+      items: NuanceItem[];
+      degraded: boolean;
+    }> {
       return new Promise((resolve, reject) => {
         const controllers: AbortController[] = [];
         const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
@@ -368,7 +372,7 @@ export async function POST(req: Request) {
                 console.warn(
                   `All models below quality bar — returning best effort (${bestEffort.length} items)`,
                 );
-                resolve(bestEffort);
+                resolve({ items: bestEffort, degraded: true });
               } else {
                 reject(new Error(`All models failed. ${errors.join(" / ")}`));
               }
@@ -396,7 +400,7 @@ export async function POST(req: Request) {
               controllers.forEach((c, j) => {
                 if (j !== index) c.abort();
               });
-              resolve(sanitized);
+              resolve({ items: sanitized, degraded: false });
             })
             .catch((err) => {
               clearTimeout(timeoutTimer);
@@ -412,10 +416,14 @@ export async function POST(req: Request) {
       });
     }
 
-    const items = await hedgedGenerate();
+    const { items, degraded } = await hedgedGenerate();
 
     // ── Cache result ─────────────────────────────────────────────────
-    cacheSet(cacheKey, items);
+    // Never cache degraded best-effort results — a transient bad generation
+    // must not poison the cache; the next request retries the models
+    if (!degraded) {
+      cacheSet(cacheKey, items);
+    }
 
     return createSSEStream(items, true);
   } catch (error: unknown) {
