@@ -3,7 +3,6 @@ import type { Dictionary } from "../ja/common";
 export const en: Dictionary = {
   // Header
   title: "Nuance Mapper",
-  subtitle: "Explore the nuances of words like a map.",
 
   // Input
   inputPlaceholder: "Enter a word (e.g. awesome)",

@@ -1,7 +1,6 @@
 export const ja = {
   // Header
   title: "Nuance Mapper",
-  subtitle: "言葉の機微を、地図のように探索する。",
 
   // Input
   inputPlaceholder: "言葉を入力してください (例: すごい)",
