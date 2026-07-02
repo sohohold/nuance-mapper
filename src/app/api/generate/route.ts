@@ -20,6 +20,72 @@ class AllModelsFailedError extends Error {
   }
 }
 
+// ── Model ladder across independent free tiers ───────────────────────
+// Every OpenRouter `:free` model drains the same per-account daily pool,
+// so extra OpenRouter rungs add failover but no quota. Rungs from other
+// providers each bring their own daily quota — configure any subset via
+// env keys; unset providers are skipped. Ordered by expected quality.
+interface ModelCandidate {
+  provider: string;
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  // Disables hybrid-reasoning (thinking) mode via OpenRouter's `reasoning`
+  // param — much faster, same JSON. OpenRouter rungs only.
+  noThink?: boolean;
+}
+
+function candidateLabel(c: ModelCandidate): string {
+  return `${c.provider}:${c.model}`;
+}
+
+function buildCandidates(): ModelCandidate[] {
+  const out: ModelCandidate[] = [];
+  const gemini = process.env.GEMINI_API_KEY;
+  if (gemini) {
+    out.push({
+      provider: "gemini",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      apiKey: gemini,
+      model: "gemini-2.5-flash",
+    });
+  }
+  const groq = process.env.GROQ_API_KEY;
+  if (groq) {
+    out.push({
+      provider: "groq",
+      baseURL: "https://api.groq.com/openai/v1",
+      apiKey: groq,
+      model: "llama-3.3-70b-versatile",
+    });
+  }
+  const cerebras = process.env.CEREBRAS_API_KEY;
+  if (cerebras) {
+    out.push({
+      provider: "cerebras",
+      baseURL: "https://api.cerebras.ai/v1",
+      apiKey: cerebras,
+      model: "gpt-oss-120b",
+    });
+  }
+  const openrouter = process.env.OPENROUTER_API_KEY;
+  if (openrouter) {
+    const base = {
+      provider: "openrouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: openrouter,
+    };
+    out.push(
+      { ...base, model: "openai/gpt-oss-120b:free" },
+      { ...base, model: "z-ai/glm-4.5-air:free", noThink: true },
+      { ...base, model: "deepseek/deepseek-chat-v3.1:free", noThink: true },
+      { ...base, model: "meta-llama/llama-3.3-70b-instruct:free" },
+      { ...base, model: "openrouter/free" },
+    );
+  }
+  return out;
+}
+
 // ── SSE helpers ──────────────────────────────────────────────────────
 function createSSEStream(
   items: NuanceItem[],
@@ -149,6 +215,8 @@ function qualityIssue(items: NuanceItem[]): string | null {
 }
 
 export async function POST(req: Request) {
+  // Hoisted so the catch block can fall back to the cache on upstream 429s
+  let cacheKey: string | null = null;
   try {
     // ── Rate limit (10 requests per minute per IP) ───────────────
     const ip =
@@ -170,9 +238,18 @@ export async function POST(req: Request) {
     }
 
     // ── Cache check ────────────────────────────────────────────────
-    const cacheKey = `${word}|${xAxis}|${yAxis}`;
+    // Normalized key (NFKC/trim) so trivial input variants hit. Case is
+    // preserved: the prompt sees the original spelling, and "Apple" and
+    // "apple" are different generations
+    cacheKey = [word, xAxis, yAxis]
+      .map((s) =>
+        String(s ?? "")
+          .normalize("NFKC")
+          .trim(),
+      )
+      .join("|");
     if (!skipCache) {
-      const cached = cacheGet<NuanceItem>(cacheKey);
+      const cached = await cacheGet<NuanceItem>(cacheKey);
       if (cached) {
         console.log(`Cache hit: ${cacheKey}`);
         return createSSEStream(cached, false, { fromCache: true });
@@ -181,9 +258,9 @@ export async function POST(req: Request) {
       console.log(`Cache skip requested: ${cacheKey}`);
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      console.warn("OPENROUTER_API_KEY is not set. Returning mock data.");
+    const candidates = buildCandidates();
+    if (candidates.length === 0) {
+      console.warn("No provider API key is set. Returning mock data.");
       return createSSEStream(
         [
           {
@@ -204,13 +281,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const openai = new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: apiKey,
-      // Failover is handled by the hedged race — the SDK's default retries
-      // (2 per request) would multiply free-tier usage and stall the ladder
-      maxRetries: 0,
-    });
+    // One client per provider baseURL, created on first use
+    const clients = new Map<string, OpenAI>();
+    const clientFor = (c: ModelCandidate): OpenAI => {
+      let client = clients.get(c.baseURL);
+      if (!client) {
+        client = new OpenAI({
+          baseURL: c.baseURL,
+          apiKey: c.apiKey,
+          // Failover is handled by the hedged race — the SDK's default retries
+          // (2 per request) would multiply free-tier usage and stall the ladder
+          maxRetries: 0,
+        });
+        clients.set(c.baseURL, client);
+      }
+      return client;
+    };
 
     const AXIS_MAX_VAL = 10;
 
@@ -263,15 +349,6 @@ export async function POST(req: Request) {
       4. 同じような座標に複数の単語が集中しないこと。
     `;
 
-    // Ordered by expected quality. `noThink` disables hybrid-reasoning
-    // (thinking) mode on models that support it — much faster, same JSON.
-    const MODELS: { id: string; noThink?: boolean }[] = [
-      { id: "openai/gpt-oss-120b:free" },
-      { id: "z-ai/glm-4.5-air:free", noThink: true },
-      { id: "deepseek/deepseek-chat-v3.1:free", noThink: true },
-      { id: "meta-llama/llama-3.3-70b-instruct:free" },
-      { id: "openrouter/free" },
-    ];
     // Hedged requests: start the next candidate only if the previous one
     // hasn't answered within this window (or failed). Keeps free-tier
     // request usage low (usually 1-2 calls) while bounding latency.
@@ -281,13 +358,13 @@ export async function POST(req: Request) {
 
     // ── Helper: call a single model, returns sanitized items ─────────
     async function callModel(
-      model: string,
-      noThink: boolean | undefined,
+      candidate: ModelCandidate,
       signal: AbortSignal,
     ): Promise<NuanceItem[]> {
+      const label = candidateLabel(candidate);
       const attempt = (disableThinking: boolean) => {
         const params = {
-          model,
+          model: candidate.model,
           messages: [
             {
               role: "system" as const,
@@ -298,26 +375,30 @@ export async function POST(req: Request) {
           ],
           ...(disableThinking ? { reasoning: { enabled: false } } : {}),
         };
-        return openai.chat.completions
-          .create(
+        return clientFor(candidate)
+          .chat.completions.create(
             params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
             { signal },
           )
           .then((result) => {
             const content = result.choices[0]?.message?.content;
-            if (!content) throw new Error(`${model}: empty content`);
+            if (!content) throw new Error(`${label}: empty content`);
             return sanitizeItems(parseModelContent(content), AXIS_MAX_VAL);
           });
       };
       try {
-        return await attempt(Boolean(noThink));
+        return await attempt(Boolean(candidate.noThink));
       } catch (err) {
         // Some providers reject the reasoning param — retry once without it,
         // but only when the error actually points at that param (never after
         // an abort, and not for unrelated 400s)
         const message = err instanceof Error ? err.message : String(err);
-        if (noThink && !signal.aborted && /reasoning/i.test(message)) {
-          console.warn(`${model}: retrying without reasoning param`);
+        if (
+          candidate.noThink &&
+          !signal.aborted &&
+          /reasoning/i.test(message)
+        ) {
+          console.warn(`${label}: retrying without reasoning param`);
           return attempt(false);
         }
         throw err;
@@ -356,14 +437,15 @@ export async function POST(req: Request) {
         };
 
         const startNext = () => {
-          if (settled || started >= MODELS.length) return;
+          if (settled || started >= candidates.length) return;
           if (staggerTimer) {
             clearTimeout(staggerTimer);
             staggerTimer = null;
           }
           const index = started++;
-          const { id, noThink } = MODELS[index];
-          console.log(`Trying model: ${id}`);
+          const candidate = candidates[index];
+          const label = candidateLabel(candidate);
+          console.log(`Trying model: ${label}`);
           const controller = new AbortController();
           controllers.push(controller);
 
@@ -374,13 +456,13 @@ export async function POST(req: Request) {
           );
           timeoutTimers.push(timeoutTimer);
 
-          const onFailure = (message: string) => {
-            console.warn(`Model failed: ${id}: ${message}`);
+          const onFailure = (message: string, rateLimited = false) => {
+            console.warn(`Model failed: ${label}: ${message}`);
             failed++;
             if (settled) return;
-            errors.push(`${id}: ${message}`);
-            if (!/^429\b/.test(message)) allRateLimited = false;
-            if (failed === MODELS.length) {
+            errors.push(`${label}: ${message}`);
+            if (!rateLimited) allRateLimited = false;
+            if (failed === candidates.length) {
               clearTimers();
               if (bestEffort.length >= 3) {
                 console.warn(
@@ -401,7 +483,7 @@ export async function POST(req: Request) {
             }
           };
 
-          callModel(id, noThink, controller.signal)
+          callModel(candidate, controller.signal)
             .then((sanitized) => {
               clearTimeout(timeoutTimer);
               if (settled) return;
@@ -414,19 +496,23 @@ export async function POST(req: Request) {
                 return;
               }
               settled = true;
-              console.log(`Winner: ${id} (${sanitized.length} items)`);
+              console.log(`Winner: ${label} (${sanitized.length} items)`);
               clearTimers();
               controllers.forEach((c, j) => {
                 if (j !== index) c.abort();
               });
               resolve({ items: sanitized, degraded: false });
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
               clearTimeout(timeoutTimer);
-              onFailure(err instanceof Error ? err.message : String(err));
+              const message = err instanceof Error ? err.message : String(err);
+              // Prefer the SDK's structured status over parsing the message,
+              // which not every provider/SDK version prefixes with the code
+              const status = (err as { status?: unknown } | null)?.status;
+              onFailure(message, status === 429 || /^429\b/.test(message));
             });
 
-          if (started < MODELS.length) {
+          if (started < candidates.length) {
             staggerTimer = setTimeout(startNext, HEDGE_STAGGER_MS);
           }
         };
@@ -441,7 +527,7 @@ export async function POST(req: Request) {
     // Never cache degraded best-effort results — a transient bad generation
     // must not poison the cache; the next request retries the models
     if (!degraded) {
-      cacheSet(cacheKey, items);
+      await cacheSet(cacheKey, items);
     }
 
     return createSSEStream(items, true, degraded ? { degraded } : undefined);
@@ -453,11 +539,23 @@ export async function POST(req: Request) {
         (error as Error & { response: { data: unknown } }).response.data,
       );
     }
-    console.error("API Key present:", !!process.env.OPENROUTER_API_KEY);
+    console.error("Providers configured:", buildCandidates().length);
     const message = error instanceof Error ? error.message : "Unknown error";
     // Free-tier quota exhausted upstream — tell the client to back off
     // (only when every model failed with a 429)
     if (error instanceof AllModelsFailedError && error.allRateLimited) {
+      // Quota exhausted everywhere: a cached map — even one the client asked
+      // to regenerate via skipCache — beats a hard failure
+      if (cacheKey) {
+        const cached = await cacheGet<NuanceItem>(cacheKey);
+        if (cached) {
+          console.warn("All providers rate limited — serving cached result");
+          return createSSEStream(cached, false, {
+            fromCache: true,
+            degraded: true,
+          });
+        }
+      }
       return NextResponse.json(
         { error: "Upstream rate limited", details: message, retryAfter: 60 },
         { status: 429, headers: { "Retry-After": "60" } },
