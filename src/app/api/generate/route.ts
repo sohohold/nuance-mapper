@@ -105,7 +105,10 @@ async function resolveModel(c: ModelCandidate): Promise<string> {
   if (c.models.length === 1) return c.models[0];
   const cached = resolvedModels.get(c.provider);
   if (cached && Date.now() < cached.expiresAt) return cached.model;
-  let model = c.models[0];
+  // If the refresh fails or matches nothing, a stale last-known-good
+  // resolution beats blindly retrying the head of the list, which may be
+  // exactly the model whose absence demoted us in the first place
+  let model = cached?.model ?? c.models[0];
   let ttl = MODEL_RESOLVE_RETRY_MS;
   try {
     const res = await fetch(`${c.baseURL.replace(/\/+$/, "")}/models`, {
