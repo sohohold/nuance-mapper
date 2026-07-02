@@ -90,6 +90,11 @@ const OriginNode = ({
   data: { xAxisLabel: string; yAxisLabel: string; scale: number };
 }) => {
   const scale = data.scale;
+  // Lines/ticks must stay visible after fitView zooms out — thicker when
+  // the coordinate scale is compressed (mobile) since zoom shrinks them
+  const lineWidth = scale < 30 ? 5 : 3;
+  const tickCls = scale < 30 ? "w-[3px] h-4" : "w-[2px] h-3";
+  const tickClsY = scale < 30 ? "h-[3px] w-4" : "h-[2px] w-3";
   // Generate tick marks from -10 to 10
   const ticks = Array.from({ length: 21 }, (_, i) => i - 10);
 
@@ -106,21 +111,21 @@ const OriginNode = ({
 
       {/* Horizontal Axis Line */}
       <div
-        className="absolute bg-white/20"
+        className="absolute bg-white/40"
         style={{
           left: 0,
-          top: ORIGIN_CENTER - 1,
+          top: ORIGIN_CENTER - lineWidth / 2,
           width: ORIGIN_SIZE,
-          height: 2,
+          height: lineWidth,
         }}
       />
       {/* Vertical Axis Line */}
       <div
-        className="absolute bg-white/20"
+        className="absolute bg-white/40"
         style={{
-          left: ORIGIN_CENTER - 1,
+          left: ORIGIN_CENTER - lineWidth / 2,
           top: 0,
-          width: 2,
+          width: lineWidth,
           height: ORIGIN_SIZE,
         }}
       />
@@ -137,7 +142,7 @@ const OriginNode = ({
               className="absolute flex flex-col items-center"
               style={{ left: xTickPos - 1, top: ORIGIN_CENTER - 6 }}
             >
-              <div className="w-[2px] h-3 bg-white/40" />
+              <div className={cn(tickCls, "bg-white/50")} />
               <div className="mt-1.5 text-white/50 text-[14px] sm:text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
                 {tick > 0 ? `+${tick}` : tick}
               </div>
@@ -148,7 +153,7 @@ const OriginNode = ({
               className="absolute flex items-center"
               style={{ left: ORIGIN_CENTER - 6, top: yTickPos - 1 }}
             >
-              <div className="h-[2px] w-3 bg-white/40" />
+              <div className={cn(tickClsY, "bg-white/50")} />
               <div className="ml-1.5 text-white/50 text-[14px] sm:text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap">
                 {tick > 0 ? `+${tick}` : tick}
               </div>

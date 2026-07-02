@@ -99,11 +99,8 @@ function parseModelContent(content: string): NuanceItem[] {
   }
 }
 
-// ── Quality gate: reject sparse or degenerate results ────────────────
-const MIN_ITEMS = 12;
-const MIN_QUADRANTS = 3;
-
-function validateItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
+// ── Sanitize: drop malformed entries, dedupe, clamp coordinates ──────
+function sanitizeItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
   const seen = new Set<string>();
   const out: NuanceItem[] = [];
   for (const item of items) {
@@ -121,16 +118,24 @@ function validateItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
       nuance: typeof item.nuance === "string" ? item.nuance : "",
     });
   }
-  if (out.length < MIN_ITEMS) {
-    throw new Error(`Low quality: only ${out.length} valid items`);
+  return out;
+}
+
+// ── Quality gate: returns a reason string for sparse/degenerate results
+const MIN_ITEMS = 12;
+const MIN_QUADRANTS = 3;
+
+function qualityIssue(items: NuanceItem[]): string | null {
+  if (items.length < MIN_ITEMS) {
+    return `only ${items.length} valid items`;
   }
   const quadrants = new Set(
-    out.map((i) => `${i.x >= 0 ? "R" : "L"}${i.y >= 0 ? "T" : "B"}`),
+    items.map((i) => `${i.x >= 0 ? "R" : "L"}${i.y >= 0 ? "T" : "B"}`),
   );
   if (quadrants.size < MIN_QUADRANTS) {
-    throw new Error(`Low quality: items cover only ${quadrants.size} quadrants`);
+    return `items cover only ${quadrants.size} quadrants`;
   }
-  return out;
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -192,6 +197,9 @@ export async function POST(req: Request) {
     const openai = new OpenAI({
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: apiKey,
+      // Failover is handled by the hedged race — the SDK's default retries
+      // (2 per request) would multiply free-tier usage and stall the ladder
+      maxRetries: 0,
     });
 
     const AXIS_MAX_VAL = 10;
@@ -261,33 +269,48 @@ export async function POST(req: Request) {
     // Abort a model that neither answers nor fails, so the hedge always settles
     const MODEL_TIMEOUT_MS = 25_000;
 
-    // ── Helper: call a single model ──────────────────────────────────
-    function callModel(
+    // ── Helper: call a single model, returns sanitized items ─────────
+    async function callModel(
       model: string,
       noThink: boolean | undefined,
       signal: AbortSignal,
-    ) {
-      const params = {
-        model,
-        messages: [
-          {
-            role: "system" as const,
-            content: "You are a helpful assistant that outputs strictly JSON.",
-          },
-          { role: "user" as const, content: prompt },
-        ],
-        ...(noThink ? { reasoning: { enabled: false } } : {}),
+    ): Promise<NuanceItem[]> {
+      const attempt = (disableThinking: boolean) => {
+        const params = {
+          model,
+          messages: [
+            {
+              role: "system" as const,
+              content:
+                "You are a helpful assistant that outputs strictly JSON.",
+            },
+            { role: "user" as const, content: prompt },
+          ],
+          ...(disableThinking ? { reasoning: { enabled: false } } : {}),
+        };
+        return openai.chat.completions
+          .create(
+            params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+            { signal },
+          )
+          .then((result) => {
+            const content = result.choices[0]?.message?.content;
+            if (!content) throw new Error(`${model}: empty content`);
+            return sanitizeItems(parseModelContent(content), AXIS_MAX_VAL);
+          });
       };
-      return openai.chat.completions
-        .create(
-          params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-          { signal },
-        )
-        .then((result) => {
-          const content = result.choices[0]?.message?.content;
-          if (!content) throw new Error(`${model}: empty content`);
-          return validateItems(parseModelContent(content), AXIS_MAX_VAL);
-        });
+      try {
+        return await attempt(Boolean(noThink));
+      } catch (err) {
+        // Some providers reject the reasoning param with a 400 — retry
+        // once without it (never after an abort)
+        const message = err instanceof Error ? err.message : String(err);
+        if (noThink && !signal.aborted && /^400|reasoning/i.test(message)) {
+          console.warn(`${model}: retrying without reasoning param`);
+          return attempt(false);
+        }
+        throw err;
+      }
     }
 
     // ── Hedged race: first *valid* result wins ────────────────────────
@@ -303,6 +326,9 @@ export async function POST(req: Request) {
         let failed = 0;
         let settled = false;
         const errors: string[] = [];
+        // Largest sanitized result that failed the quality gate — returned
+        // as a best effort if no model passes, instead of erroring out
+        let bestEffort: NuanceItem[] = [];
 
         const clearTimers = () => {
           if (staggerTimer) {
@@ -331,32 +357,50 @@ export async function POST(req: Request) {
           );
           timeoutTimers.push(timeoutTimer);
 
+          const onFailure = (message: string) => {
+            console.warn(`Model failed: ${id}: ${message}`);
+            failed++;
+            if (settled) return;
+            errors.push(`${id}: ${message}`);
+            if (failed === MODELS.length) {
+              clearTimers();
+              if (bestEffort.length >= 3) {
+                console.warn(
+                  `All models below quality bar — returning best effort (${bestEffort.length} items)`,
+                );
+                resolve(bestEffort);
+              } else {
+                reject(new Error(`All models failed. ${errors.join(" / ")}`));
+              }
+            } else if (failed === started) {
+              // Everything in flight already failed — don't wait out the stagger
+              startNext();
+            }
+          };
+
           callModel(id, noThink, controller.signal)
-            .then((validated) => {
+            .then((sanitized) => {
               clearTimeout(timeoutTimer);
               if (settled) return;
+              const issue = qualityIssue(sanitized);
+              if (issue) {
+                if (sanitized.length > bestEffort.length) {
+                  bestEffort = sanitized;
+                }
+                onFailure(`low quality (${issue})`);
+                return;
+              }
               settled = true;
-              console.log(`Winner: ${id} (${validated.length} items)`);
+              console.log(`Winner: ${id} (${sanitized.length} items)`);
               clearTimers();
               controllers.forEach((c, j) => {
                 if (j !== index) c.abort();
               });
-              resolve(validated);
+              resolve(sanitized);
             })
             .catch((err) => {
               clearTimeout(timeoutTimer);
-              const message = err instanceof Error ? err.message : String(err);
-              console.warn(`Model failed: ${id}: ${message}`);
-              failed++;
-              if (settled) return;
-              errors.push(`${id}: ${message}`);
-              if (failed === MODELS.length) {
-                clearTimers();
-                reject(new Error(`All models failed. ${errors.join(" / ")}`));
-              } else if (failed === started) {
-                // Everything in flight already failed — don't wait out the stagger
-                startNext();
-              }
+              onFailure(err instanceof Error ? err.message : String(err));
             });
 
           if (started < MODELS.length) {
@@ -384,6 +428,13 @@ export async function POST(req: Request) {
     }
     console.error("API Key present:", !!process.env.OPENROUTER_API_KEY);
     const message = error instanceof Error ? error.message : "Unknown error";
+    // Free-tier quota exhausted upstream — tell the client to back off
+    if (message.startsWith("All models failed") && message.includes("429")) {
+      return NextResponse.json(
+        { error: "Upstream rate limited", details: message, retryAfter: 60 },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
     return NextResponse.json(
       { error: "Internal Server Error", details: message },
       { status: 500 },

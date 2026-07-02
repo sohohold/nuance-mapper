@@ -59,7 +59,7 @@ function HomeContent() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to fetch data");
+        throw new Error(response.status === 429 ? "RATE_LIMIT" : "FETCH_FAILED");
       }
 
       const contentType = response.headers.get("content-type") || "";
@@ -105,7 +105,11 @@ function HomeContent() {
       }
     } catch (error) {
       console.error("Error fetching data:", error);
-      alert(t.errorGeneric);
+      alert(
+        error instanceof Error && error.message === "RATE_LIMIT"
+          ? t.errorRateLimit
+          : t.errorGeneric,
+      );
     } finally {
       setLoading(false);
     }
