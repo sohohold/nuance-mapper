@@ -35,9 +35,9 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-4">
+    <div className="w-full max-w-2xl mx-auto space-y-1.5 sm:space-y-4">
       <form onSubmit={handleSubmit} className="relative group">
-        <div className="relative overflow-hidden flex items-center gap-2 p-2 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl transition-all duration-300 focus-within:bg-white/20 focus-within:border-white/40 focus-within:ring-2 focus-within:ring-white/20">
+        <div className="relative overflow-hidden flex items-center gap-2 p-1.5 sm:p-2 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl transition-all duration-300 focus-within:bg-white/20 focus-within:border-white/40 focus-within:ring-2 focus-within:ring-white/20">
           {isLoading && (
             <div className="absolute inset-0 -translate-x-full animate-shimmer bg-linear-to-r from-transparent via-white/10 to-transparent skew-x-[-20deg]" />
           )}
@@ -47,7 +47,7 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
             onChange={(e) => setWord(e.target.value)}
             maxLength={24}
             placeholder={t.inputPlaceholder}
-            className="flex-1 relative z-10 bg-transparent px-4 py-3 text-lg text-white placeholder:text-white/50 focus:outline-none"
+            className="flex-1 relative z-10 bg-transparent px-3 py-2 text-base sm:px-4 sm:py-3 sm:text-lg text-white placeholder:text-white/50 focus:outline-none"
             disabled={isLoading}
           />
           {isLoading && (
@@ -63,16 +63,16 @@ export function InputArea({ onSearch, isLoading }: InputAreaProps) {
             type="submit"
             disabled={isLoading || !word.trim()}
             className={cn(
-              "p-3 rounded-xl transition-all duration-300 cursor-pointer relative z-10",
+              "p-2.5 sm:p-3 rounded-xl transition-all duration-300 cursor-pointer relative z-10",
               isLoading || !word.trim()
                 ? "bg-white/5 text-white/30 cursor-not-allowed"
                 : "bg-white text-indigo-900 hover:bg-white/90 hover:scale-105 active:scale-95 shadow-lg",
             )}
           >
             {isLoading ? (
-              <Loader2 className="w-6 h-6 animate-spin" />
+              <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
             ) : (
-              <Search className="w-6 h-6" />
+              <Search className="w-5 h-5 sm:w-6 sm:h-6" />
             )}
           </button>
         </div>

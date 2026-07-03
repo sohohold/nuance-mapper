@@ -13,7 +13,7 @@ const NuanceMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         <p>Loading...</p>
       </div>
     ),
@@ -131,31 +131,34 @@ function HomeContent() {
   };
 
   return (
-    <main className="min-h-screen relative overflow-hidden bg-[#0f172a] text-white selection:bg-indigo-500/30">
+    // h-dvh + overflow-hidden below sm: the whole app fits one mobile
+    // viewport, so the page never scrolls and only the canvas pans
+    <main className="h-dvh sm:h-auto sm:min-h-screen relative overflow-hidden bg-[#0f172a] text-white selection:bg-indigo-500/30">
       {/* Dynamic Background Elements */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-purple-600/30 blur-[120px] animate-pulse" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
 
-      <div className="relative z-10 container mx-auto px-4 py-8 md:py-16 flex flex-col items-center gap-8 md:gap-12">
+      <div className="relative z-10 container mx-auto h-full sm:h-auto px-4 py-2 sm:py-8 md:py-16 flex flex-col items-center gap-2 sm:gap-8 md:gap-12">
         {/* Language Switcher */}
-        <div className="absolute top-4 right-4">
+        <div className="absolute top-2 right-3 sm:top-4 sm:right-4">
           <LanguageSwitcher />
         </div>
 
         {/* Header */}
-        <div className="text-center">
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
+        <div className="text-center shrink-0">
+          <h1 className="text-2xl sm:text-4xl md:text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-linear-to-r from-white via-white to-white/50">
             {t.title}
           </h1>
         </div>
 
         {/* Input Section */}
-        <div className="w-full">
+        <div className="w-full shrink-0">
           <InputArea onSearch={handleSearch} isLoading={loading} />
         </div>
 
-        {/* Visualization Section */}
-        <div className="w-full max-w-4xl animate-in fade-in slide-in-from-bottom-8 duration-700">
+        {/* Visualization Section — on mobile it takes all remaining
+            viewport height so the canvas bottom edge is always on screen */}
+        <div className="w-full max-w-4xl flex-1 min-h-0 flex flex-col sm:flex-none sm:block animate-in fade-in slide-in-from-bottom-8 duration-700">
           <NuanceMap
             data={data}
             xAxisLabel={xAxisLabel}
@@ -163,7 +166,7 @@ function HomeContent() {
             isLoading={loading}
           />
           {(fromCache || degraded) && !loading && data.length > 0 && (
-            <div className="mt-3 flex items-center justify-center gap-2 animate-in fade-in duration-300">
+            <div className="mt-2 sm:mt-3 shrink-0 flex items-center justify-center gap-2 animate-in fade-in duration-300">
               <span
                 className={
                   degraded
@@ -186,7 +189,7 @@ function HomeContent() {
         </div>
 
         {/* Footer */}
-        <footer className="w-full text-center text-white/20 text-sm mt-8">
+        <footer className="w-full text-center text-white/20 text-[10px] sm:text-sm mt-0 sm:mt-8 shrink-0">
           <p>{t.copyright}</p>
         </footer>
       </div>

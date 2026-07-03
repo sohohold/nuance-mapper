@@ -32,10 +32,6 @@ interface NuanceMapProps {
 const SCALE_DESKTOP = 50;
 const SCALE_MOBILE = 20;
 
-// Panning stops at ±16 coordinate units so users can't get lost far
-// beyond the data (axis values only go to ±10)
-const PAN_LIMIT_UNITS = 16;
-
 // Quadrant color, shared by nodes, minimap and tooltip:
 // 0 = x>0,y>0  1 = x>0,y<=0  2 = x<=0,y>0  3 = x<=0,y<=0
 const QUADRANT_BG = [
@@ -94,11 +90,7 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
 const ORIGIN_SIZE = 2000; // px - size of the origin node container
 const ORIGIN_CENTER = ORIGIN_SIZE / 2;
 
-const OriginNode = ({
-  data,
-}: {
-  data: { xAxisLabel: string; yAxisLabel: string; scale: number };
-}) => {
+const OriginNode = ({ data }: { data: { scale: number } }) => {
   const scale = data.scale;
   // Lines/ticks must stay visible after fitView zooms out — thicker when
   // the coordinate scale is compressed (mobile) since zoom shrinks them
@@ -174,20 +166,6 @@ const OriginNode = ({
           </div>
         );
       })}
-
-      {/* Axis Labels */}
-      <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-y-1/2"
-        style={{ top: ORIGIN_CENTER, left: ORIGIN_CENTER + 6 * scale }}
-      >
-        {data.xAxisLabel} (+X)
-      </div>
-      <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-x-1/2"
-        style={{ left: ORIGIN_CENTER, top: ORIGIN_CENTER - 6 * scale }}
-      >
-        {data.yAxisLabel} (+Y)
-      </div>
     </div>
   );
 };
@@ -264,7 +242,7 @@ function NuanceMapContent({
     outNodes.push({
       id: "origin",
       position: { x: 0, y: 0 },
-      data: { xAxisLabel, yAxisLabel, scale },
+      data: { scale },
       type: "originNode",
       selectable: false,
       draggable: false,
@@ -302,7 +280,7 @@ function NuanceMapContent({
     });
 
     return outNodes;
-  }, [data, xAxisLabel, yAxisLabel, scale]);
+  }, [data, scale]);
 
   // Debounced fitView — settles after items stop arriving (streaming)
   useEffect(() => {
@@ -352,7 +330,7 @@ function NuanceMapContent({
 
   if (!data || data.length === 0) {
     return (
-      <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         {isLoading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white/40" />
@@ -368,7 +346,7 @@ function NuanceMapContent({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
+      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
         nodes={nodes}
@@ -379,10 +357,6 @@ function NuanceMapContent({
         onMoveStart={hideNow}
         minZoom={isMobile ? 0.25 : 0.5}
         maxZoom={4}
-        translateExtent={[
-          [-PAN_LIMIT_UNITS * scale, -PAN_LIMIT_UNITS * scale],
-          [PAN_LIMIT_UNITS * scale, PAN_LIMIT_UNITS * scale],
-        ]}
         proOptions={{ hideAttribution: true }}
         className="transition-cursor cursor-grab active:cursor-grabbing"
         nodesDraggable={false}
@@ -404,6 +378,15 @@ function NuanceMapContent({
           }}
         />
       </ReactFlow>
+
+      {/* Axis labels pinned to the container edges — always legible on any
+          pan/zoom, instead of drifting/burying inside the canvas */}
+      <div className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none max-w-[85%] truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
+        ↑ {yAxisLabel} (+Y)
+      </div>
+      <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 z-20 pointer-events-none max-w-[85%] truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
+        {xAxisLabel} (+X) →
+      </div>
 
       {/* Custom Tooltip */}
       <AnimatePresence>
@@ -493,8 +476,8 @@ function NuanceMapContent({
         )}
       </AnimatePresence>
 
-      {/* Help text */}
-      <div className="absolute top-4 right-4 text-white/40 text-xs pointer-events-none flex items-center gap-1.5 px-3 py-1.5 bg-black/20 rounded-full backdrop-blur-sm border border-white/10">
+      {/* Help text — hidden on touch-sized screens (wrong hint + clutter) */}
+      <div className="absolute top-4 right-4 text-white/40 text-xs pointer-events-none hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-black/20 rounded-full backdrop-blur-sm border border-white/10">
         <Move size={12} />
         <span>{t.helpText}</span>
       </div>
