@@ -5,8 +5,9 @@ interface RateLimitEntry {
 
 const store = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries periodically
-setInterval(() => {
+// Clean up expired entries periodically. unref() so this housekeeping
+// timer never keeps the process alive on its own.
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of store) {
     if (now >= entry.resetAt) {
@@ -14,6 +15,7 @@ setInterval(() => {
     }
   }
 }, 60_000);
+cleanupTimer.unref?.();
 
 /**
  * Simple in-memory sliding-window rate limiter.

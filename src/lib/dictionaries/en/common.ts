@@ -40,6 +40,8 @@ export const en: Dictionary = {
   emptyState: "Enter a word to start mapping",
   mapLoading: "Loading map...",
   helpText: "Drag to pan, Scroll to zoom",
+  copy: "Copy",
+  copied: "Copied!",
 
   // Footer
   copyright: "© 2026 Nuance Mapper.",

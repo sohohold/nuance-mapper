@@ -61,7 +61,9 @@ function HomeContent() {
       });
 
       if (!response.ok) {
-        throw new Error(response.status === 429 ? "RATE_LIMIT" : "FETCH_FAILED");
+        throw new Error(
+          response.status === 429 ? "RATE_LIMIT" : "FETCH_FAILED",
+        );
       }
 
       const contentType = response.headers.get("content-type") || "";
@@ -164,7 +166,9 @@ function HomeContent() {
             <div className="mt-3 flex items-center justify-center gap-2 animate-in fade-in duration-300">
               <span
                 className={
-                  degraded ? "text-xs text-amber-300/80" : "text-xs text-white/40"
+                  degraded
+                    ? "text-xs text-amber-300/80"
+                    : "text-xs text-white/40"
                 }
               >
                 {degraded ? t.degradedResult : t.cachedResult}

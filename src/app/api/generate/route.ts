@@ -229,22 +229,32 @@ function parseModelContent(content: string): NuanceItem[] {
 }
 
 // ── Sanitize: drop malformed entries, dedupe, clamp coordinates ──────
+// Size caps bound what an over-eager (or hijacked) model response can
+// push into the cache and to clients
+const MAX_ITEMS = 40;
+const MAX_ITEM_WORD_LEN = 60;
+const MAX_NUANCE_LEN = 120;
+
 function sanitizeItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
   const seen = new Set<string>();
   const out: NuanceItem[] = [];
   for (const item of items) {
+    if (out.length >= MAX_ITEMS) break;
     if (typeof item?.word !== "string" || !item.word.trim()) continue;
     const x = Number(item.x);
     const y = Number(item.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const word = item.word.trim();
-    if (seen.has(word)) continue;
+    if (word.length > MAX_ITEM_WORD_LEN || seen.has(word)) continue;
     seen.add(word);
     out.push({
       word,
       x: Math.max(-axisMax, Math.min(axisMax, x)),
       y: Math.max(-axisMax, Math.min(axisMax, y)),
-      nuance: typeof item.nuance === "string" ? item.nuance : "",
+      nuance:
+        typeof item.nuance === "string"
+          ? item.nuance.slice(0, MAX_NUANCE_LEN)
+          : "",
     });
   }
   return out;
@@ -284,10 +294,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const { word, xAxis, yAxis, skipCache } = await req.json();
-
-    if (!word) {
+    // ── Input validation ─────────────────────────────────────────
+    // Everything here is interpolated into the prompt, so reject
+    // non-strings and oversized payloads outright
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { word, xAxis, yAxis, skipCache } = (body ?? {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof word !== "string" || !word.trim() || word.length > 64) {
       return NextResponse.json({ error: "Word is required" }, { status: 400 });
+    }
+    const isValidAxis = (v: unknown): v is string =>
+      typeof v === "string" && v.trim().length > 0 && v.length <= 80;
+    if (!isValidAxis(xAxis) || !isValidAxis(yAxis)) {
+      return NextResponse.json(
+        { error: "Axis labels are required" },
+        { status: 400 },
+      );
     }
 
     // ── Cache check ────────────────────────────────────────────────
@@ -295,11 +324,7 @@ export async function POST(req: Request) {
     // preserved: the prompt sees the original spelling, and "Apple" and
     // "apple" are different generations
     cacheKey = [word, xAxis, yAxis]
-      .map((s) =>
-        String(s ?? "")
-          .normalize("NFKC")
-          .trim(),
-      )
+      .map((s) => s.normalize("NFKC").trim())
       .join("|");
     if (!skipCache) {
       const cached = await cacheGet<NuanceItem>(cacheKey);
