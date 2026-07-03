@@ -139,8 +139,9 @@ function HomeContent() {
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
 
       <div className="relative z-10 container mx-auto h-full sm:h-auto px-4 py-2 sm:py-8 md:py-16 flex flex-col items-center gap-2 sm:gap-8 md:gap-12">
-        {/* Language Switcher */}
-        <div className="absolute top-2 right-3 sm:top-4 sm:right-4">
+        {/* Language Switcher — in-flow above the title on mobile so it can
+            never overlap the centered heading on narrow screens */}
+        <div className="w-full flex justify-end shrink-0 sm:absolute sm:top-4 sm:right-4 sm:w-auto">
           <LanguageSwitcher />
         </div>
 
