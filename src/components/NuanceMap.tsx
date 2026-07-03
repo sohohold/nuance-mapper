@@ -9,8 +9,16 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Copy, Loader2, Move } from "lucide-react";
@@ -32,10 +40,6 @@ interface NuanceMapProps {
 const SCALE_DESKTOP = 50;
 const SCALE_MOBILE = 20;
 
-// Panning stops at ±16 coordinate units so users can't get lost far
-// beyond the data (axis values only go to ±10)
-const PAN_LIMIT_UNITS = 16;
-
 // Quadrant color, shared by nodes, minimap and tooltip:
 // 0 = x>0,y>0  1 = x>0,y<=0  2 = x<=0,y>0  3 = x<=0,y<=0
 const QUADRANT_BG = [
@@ -48,6 +52,14 @@ const QUADRANT_HEX = ["#F472B6", "#A78BFA", "#34D399", "#60A5FA"];
 
 function quadrantIndex(x: number, y: number): number {
   return x > 0 ? (y > 0 ? 0 : 1) : y > 0 ? 2 : 3;
+}
+
+// Counter-scale for zooming in past 1:1 — markers, labels and ticks keep a
+// constant on-screen size while positions spread apart, instead of scaling
+// up until they overlap and crush each other. Below 1:1 (overview) nothing
+// changes: content zooms out naturally.
+function useCounterScale(): number {
+  return useStore((s) => 1 / Math.max(s.transform[2], 1));
 }
 
 function useIsMobile() {
@@ -63,22 +75,44 @@ function useIsMobile() {
 }
 
 // Custom Node for displaying words
-const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
+interface WordNodeData {
+  items: NuanceData[];
+  onDotEnter: (
+    event: React.MouseEvent<HTMLElement>,
+    items: NuanceData[],
+  ) => void;
+  onDotLeave: () => void;
+}
+
+const WordNode = ({ data }: { data: WordNodeData }) => {
   const items = data.items;
   const firstItem = items[0];
+  const counterScale = useCounterScale();
 
   return (
     <div
-      className="flex flex-col items-center cursor-pointer group"
-      style={{ transform: "translate(-50%, -6px)" }}
+      className="flex flex-col items-center pointer-events-none"
+      style={{
+        transform: `translate(-50%, -6px) scale(${counterScale})`,
+        transformOrigin: "top center",
+      }}
     >
+      {/* Only the dot triggers the tooltip — the label is display-only, so
+          the tap target is unambiguous. Padding widens the hit area for
+          touch without changing the visual size. */}
       <div
-        className={cn(
-          "w-4 h-4 sm:w-3 sm:h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover:scale-150",
-          QUADRANT_BG[quadrantIndex(firstItem.x, firstItem.y)],
-        )}
-      />
-      <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap pointer-events-none select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
+        className="pointer-events-auto cursor-pointer p-2 -m-2 group/dot"
+        onMouseEnter={(e) => data.onDotEnter(e, items)}
+        onMouseLeave={data.onDotLeave}
+      >
+        <div
+          className={cn(
+            "w-4 h-4 sm:w-3 sm:h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover/dot:scale-150",
+            QUADRANT_BG[quadrantIndex(firstItem.x, firstItem.y)],
+          )}
+        />
+      </div>
+      <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
         {firstItem.word}
         {items.length > 1 && (
           <span className="ml-1 opacity-70 border-l border-white/30 pl-1">
@@ -94,15 +128,13 @@ const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
 const ORIGIN_SIZE = 2000; // px - size of the origin node container
 const ORIGIN_CENTER = ORIGIN_SIZE / 2;
 
-const OriginNode = ({
-  data,
-}: {
-  data: { xAxisLabel: string; yAxisLabel: string; scale: number };
-}) => {
+const OriginNode = ({ data }: { data: { scale: number } }) => {
   const scale = data.scale;
+  const counterScale = useCounterScale();
   // Lines/ticks must stay visible after fitView zooms out — thicker when
-  // the coordinate scale is compressed (mobile) since zoom shrinks them
-  const lineWidth = scale < 30 ? 5 : 3;
+  // the coordinate scale is compressed (mobile) since zoom shrinks them.
+  // Counter-scaled so the lines don't turn into thick bars when zoomed in.
+  const lineWidth = (scale < 30 ? 5 : 3) * counterScale;
   const tickCls = scale < 30 ? "w-[3px] h-4" : "w-[2px] h-3";
   const tickClsY = scale < 30 ? "h-[3px] w-4" : "h-[2px] w-3";
   const tickLabelCls =
@@ -120,7 +152,11 @@ const OriginNode = ({
       {/* Center Origin Dot */}
       <div
         className="absolute w-4 h-4 rounded-full border-2 border-white/30 bg-black/50 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
-        style={{ left: ORIGIN_CENTER - 8, top: ORIGIN_CENTER - 8 }}
+        style={{
+          left: ORIGIN_CENTER - 8,
+          top: ORIGIN_CENTER - 8,
+          transform: `scale(${counterScale})`,
+        }}
       />
 
       {/* Horizontal Axis Line */}
@@ -153,7 +189,12 @@ const OriginNode = ({
             {/* X-axis tick */}
             <div
               className="absolute flex flex-col items-center"
-              style={{ left: xTickPos - 1, top: ORIGIN_CENTER - 6 }}
+              style={{
+                left: xTickPos - 1,
+                top: ORIGIN_CENTER - 6,
+                transform: `scale(${counterScale})`,
+                transformOrigin: "top center",
+              }}
             >
               <div className={cn(tickCls, "bg-white/50")} />
               <div className={cn("mt-1.5", tickLabelCls)}>
@@ -164,7 +205,12 @@ const OriginNode = ({
             {/* Y-axis tick */}
             <div
               className="absolute flex items-center"
-              style={{ left: ORIGIN_CENTER - 6, top: yTickPos - 1 }}
+              style={{
+                left: ORIGIN_CENTER - 6,
+                top: yTickPos - 1,
+                transform: `scale(${counterScale})`,
+                transformOrigin: "left center",
+              }}
             >
               <div className={cn(tickClsY, "bg-white/50")} />
               <div className={cn("ml-1.5", tickLabelCls)}>
@@ -174,20 +220,6 @@ const OriginNode = ({
           </div>
         );
       })}
-
-      {/* Axis Labels */}
-      <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-y-1/2"
-        style={{ top: ORIGIN_CENTER, left: ORIGIN_CENTER + 6 * scale }}
-      >
-        {data.xAxisLabel} (+X)
-      </div>
-      <div
-        className="absolute px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/20 text-white/90 text-lg sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider -translate-x-1/2"
-        style={{ left: ORIGIN_CENTER, top: ORIGIN_CENTER - 6 * scale }}
-      >
-        {data.yAxisLabel} (+Y)
-      </div>
     </div>
   );
 };
@@ -257,6 +289,51 @@ function NuanceMapContent({
     }
   }, []);
 
+  const onDotEnter = useCallback(
+    (event: React.MouseEvent<HTMLElement>, items: NuanceData[]) => {
+      cancelHide();
+      const container = containerRef.current;
+      if (!container) return;
+      const containerRect = container.getBoundingClientRect();
+      const dotRect = event.currentTarget.getBoundingClientRect();
+      // Anchor below the whole node (dot + label) when flipped down
+      const nodeRect =
+        event.currentTarget
+          .closest(".react-flow__node")
+          ?.getBoundingClientRect() ?? dotRect;
+
+      const x = dotRect.left + dotRect.width / 2 - containerRect.left;
+      const below =
+        dotRect.top - containerRect.top < containerRect.height * 0.4;
+      const y = below
+        ? nodeRect.bottom - containerRect.top
+        : dotRect.top - containerRect.top;
+      setHoverInfo({ x, y, below, items });
+    },
+    [cancelHide],
+  );
+
+  // Keep the tooltip fully inside the container: measure its layout size
+  // (offsetWidth/Height ignore the entry animation transforms) and shift
+  // the anchor so no edge — and no copy button — gets clipped.
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [shift, setShift] = useState({ dx: 0, dy: 0 });
+  useLayoutEffect(() => {
+    const el = tooltipRef.current;
+    const container = containerRef.current;
+    if (!hoverInfo || !el || !container) return;
+    const pad = 8;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const rawLeft = hoverInfo.x - w / 2;
+    const rawTop = hoverInfo.below ? hoverInfo.y + 15 : hoverInfo.y - h - 15;
+    const clamp = (v: number, min: number, max: number) =>
+      Math.min(Math.max(v, min), Math.max(max, min));
+    const dx = clamp(rawLeft, pad, container.clientWidth - w - pad) - rawLeft;
+    const dy = clamp(rawTop, pad, container.clientHeight - h - pad) - rawTop;
+    setShift((prev) => (prev.dx === dx && prev.dy === dy ? prev : { dx, dy }));
+  }, [hoverInfo]);
+
   const nodes = useMemo(() => {
     const outNodes: Node[] = [];
 
@@ -264,7 +341,7 @@ function NuanceMapContent({
     outNodes.push({
       id: "origin",
       position: { x: 0, y: 0 },
-      data: { xAxisLabel, yAxisLabel, scale },
+      data: { scale },
       type: "originNode",
       selectable: false,
       draggable: false,
@@ -293,7 +370,7 @@ function NuanceMapContent({
         id: `word-${i}`,
         // -y because React Flow's canvas is Y-down, but cartesian data coordinates are Y-up
         position: { x: group.x * scale, y: -group.y * scale },
-        data: { items: group.items },
+        data: { items: group.items, onDotEnter, onDotLeave: scheduleHide },
         type: "wordNode",
         draggable: false,
         selectable: false,
@@ -302,7 +379,7 @@ function NuanceMapContent({
     });
 
     return outNodes;
-  }, [data, xAxisLabel, yAxisLabel, scale]);
+  }, [data, scale, onDotEnter, scheduleHide]);
 
   // Debounced fitView — settles after items stop arriving (streaming)
   useEffect(() => {
@@ -312,47 +389,17 @@ function NuanceMapContent({
         fitView({
           nodes: wordNodes,
           duration: 800,
-          padding: isMobile ? 0.1 : 0.2,
+          // Mobile padding also keeps edge words clear of the axis legend
+          padding: isMobile ? 0.15 : 0.2,
         });
       }, 300);
       return () => clearTimeout(timer);
     }
   }, [nodes, fitView, isMobile]);
 
-  const onNodeMouseEnter = useCallback(
-    (event: React.MouseEvent, node: Node) => {
-      cancelHide();
-      if (node.type === "wordNode" && containerRef.current) {
-        const containerRect = containerRef.current.getBoundingClientRect();
-        // Get the HTML element of the node that was hovered
-        const nodeElement = (event.target as HTMLElement).closest(
-          ".react-flow__node",
-        );
-
-        let x = event.clientX - containerRect.left;
-        let y = event.clientY - containerRect.top;
-        let below = y < containerRect.height * 0.4;
-
-        // If we found the node's DOM element, use its bounds to perfectly
-        // center the tooltip above (or below) it
-        if (nodeElement) {
-          const nodeRect = nodeElement.getBoundingClientRect();
-          x = nodeRect.left + nodeRect.width / 2 - containerRect.left;
-          below = nodeRect.top - containerRect.top < containerRect.height * 0.4;
-          y = below
-            ? nodeRect.bottom - containerRect.top
-            : nodeRect.top - containerRect.top;
-        }
-
-        setHoverInfo({ x, y, below, items: node.data.items as NuanceData[] });
-      }
-    },
-    [cancelHide],
-  );
-
   if (!data || data.length === 0) {
     return (
-      <div className="w-full h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         {isLoading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white/40" />
@@ -368,21 +415,15 @@ function NuanceMapContent({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
+      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
         nodes={nodes}
         nodeTypes={nodeTypes}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={scheduleHide}
         onPaneMouseEnter={scheduleHide}
         onMoveStart={hideNow}
         minZoom={isMobile ? 0.25 : 0.5}
         maxZoom={4}
-        translateExtent={[
-          [-PAN_LIMIT_UNITS * scale, -PAN_LIMIT_UNITS * scale],
-          [PAN_LIMIT_UNITS * scale, PAN_LIMIT_UNITS * scale],
-        ]}
         proOptions={{ hideAttribution: true }}
         className="transition-cursor cursor-grab active:cursor-grabbing"
         nodesDraggable={false}
@@ -404,6 +445,18 @@ function NuanceMapContent({
           }}
         />
       </ReactFlow>
+
+      {/* Axis legend pinned to the top-left corner — always legible on any
+          pan/zoom. Kept in a corner because the generator concentrates
+          words at the axis extremes (top-center / right-center). */}
+      <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20 pointer-events-none flex flex-col items-start gap-1 max-w-[70%]">
+        <div className="w-full truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
+          ↑ {yAxisLabel} (+Y)
+        </div>
+        <div className="w-full truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
+          → {xAxisLabel} (+X)
+        </div>
+      </div>
 
       {/* Custom Tooltip */}
       <AnimatePresence>
@@ -428,10 +481,11 @@ function NuanceMapContent({
               x: "-50%",
             }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[280px] z-100 pointer-events-auto"
+            ref={tooltipRef}
+            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[min(280px,80vw)] z-100 pointer-events-auto"
             style={{
-              left: hoverInfo.x,
-              top: hoverInfo.y,
+              left: hoverInfo.x + shift.dx,
+              top: hoverInfo.y + shift.dy,
             }}
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
@@ -493,8 +547,8 @@ function NuanceMapContent({
         )}
       </AnimatePresence>
 
-      {/* Help text */}
-      <div className="absolute top-4 right-4 text-white/40 text-xs pointer-events-none flex items-center gap-1.5 px-3 py-1.5 bg-black/20 rounded-full backdrop-blur-sm border border-white/10">
+      {/* Help text — hidden on touch-sized screens (wrong hint + clutter) */}
+      <div className="absolute top-4 right-4 text-white/40 text-xs pointer-events-none hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-black/20 rounded-full backdrop-blur-sm border border-white/10">
         <Move size={12} />
         <span>{t.helpText}</span>
       </div>
