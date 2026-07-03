@@ -7,9 +7,9 @@ import {
   useMemo,
   useState,
 } from "react";
+import { en } from "./dictionaries/en/common";
 import type { Dictionary } from "./dictionaries/ja/common";
 import { ja } from "./dictionaries/ja/common";
-import { en } from "./dictionaries/en/common";
 
 export type Locale = "ja" | "en";
 
@@ -46,9 +46,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     [locale, setLocale],
   );
 
-  return (
-    <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
-  );
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useDictionary() {

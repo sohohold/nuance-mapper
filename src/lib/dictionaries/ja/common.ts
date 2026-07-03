@@ -38,6 +38,8 @@ export const ja = {
   emptyState: "言葉を入力してマッピングを開始してください",
   mapLoading: "マップを読み込み中...",
   helpText: "Drag to pan, Scroll to zoom",
+  copy: "コピー",
+  copied: "コピーしました",
 
   // Footer
   copyright: "© 2026 Nuance Mapper.",
