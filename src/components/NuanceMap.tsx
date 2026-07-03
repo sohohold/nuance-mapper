@@ -9,6 +9,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xyflow/react/dist/style.css";
@@ -46,6 +47,14 @@ function quadrantIndex(x: number, y: number): number {
   return x > 0 ? (y > 0 ? 0 : 1) : y > 0 ? 2 : 3;
 }
 
+// Counter-scale for zooming in past 1:1 — markers, labels and ticks keep a
+// constant on-screen size while positions spread apart, instead of scaling
+// up until they overlap and crush each other. Below 1:1 (overview) nothing
+// changes: content zooms out naturally.
+function useCounterScale(): number {
+  return useStore((s) => 1 / Math.max(s.transform[2], 1));
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -62,11 +71,15 @@ function useIsMobile() {
 const WordNode = ({ data }: { data: { items: NuanceData[] } }) => {
   const items = data.items;
   const firstItem = items[0];
+  const counterScale = useCounterScale();
 
   return (
     <div
       className="flex flex-col items-center cursor-pointer group"
-      style={{ transform: "translate(-50%, -6px)" }}
+      style={{
+        transform: `translate(-50%, -6px) scale(${counterScale})`,
+        transformOrigin: "top center",
+      }}
     >
       <div
         className={cn(
@@ -92,9 +105,11 @@ const ORIGIN_CENTER = ORIGIN_SIZE / 2;
 
 const OriginNode = ({ data }: { data: { scale: number } }) => {
   const scale = data.scale;
+  const counterScale = useCounterScale();
   // Lines/ticks must stay visible after fitView zooms out — thicker when
-  // the coordinate scale is compressed (mobile) since zoom shrinks them
-  const lineWidth = scale < 30 ? 5 : 3;
+  // the coordinate scale is compressed (mobile) since zoom shrinks them.
+  // Counter-scaled so the lines don't turn into thick bars when zoomed in.
+  const lineWidth = (scale < 30 ? 5 : 3) * counterScale;
   const tickCls = scale < 30 ? "w-[3px] h-4" : "w-[2px] h-3";
   const tickClsY = scale < 30 ? "h-[3px] w-4" : "h-[2px] w-3";
   const tickLabelCls =
@@ -112,7 +127,11 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
       {/* Center Origin Dot */}
       <div
         className="absolute w-4 h-4 rounded-full border-2 border-white/30 bg-black/50 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
-        style={{ left: ORIGIN_CENTER - 8, top: ORIGIN_CENTER - 8 }}
+        style={{
+          left: ORIGIN_CENTER - 8,
+          top: ORIGIN_CENTER - 8,
+          transform: `scale(${counterScale})`,
+        }}
       />
 
       {/* Horizontal Axis Line */}
@@ -145,7 +164,12 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
             {/* X-axis tick */}
             <div
               className="absolute flex flex-col items-center"
-              style={{ left: xTickPos - 1, top: ORIGIN_CENTER - 6 }}
+              style={{
+                left: xTickPos - 1,
+                top: ORIGIN_CENTER - 6,
+                transform: `scale(${counterScale})`,
+                transformOrigin: "top center",
+              }}
             >
               <div className={cn(tickCls, "bg-white/50")} />
               <div className={cn("mt-1.5", tickLabelCls)}>
@@ -156,7 +180,12 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
             {/* Y-axis tick */}
             <div
               className="absolute flex items-center"
-              style={{ left: ORIGIN_CENTER - 6, top: yTickPos - 1 }}
+              style={{
+                left: ORIGIN_CENTER - 6,
+                top: yTickPos - 1,
+                transform: `scale(${counterScale})`,
+                transformOrigin: "left center",
+              }}
             >
               <div className={cn(tickClsY, "bg-white/50")} />
               <div className={cn("ml-1.5", tickLabelCls)}>
