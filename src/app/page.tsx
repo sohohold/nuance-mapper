@@ -138,7 +138,11 @@ function HomeContent() {
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-purple-600/30 blur-[120px] animate-pulse" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
 
-      <div className="relative z-10 container mx-auto h-full sm:h-auto px-4 py-2 sm:py-8 md:py-16 flex flex-col items-center gap-2 sm:gap-8 md:gap-12">
+      {/* overflow-y-auto: normally everything fits h-dvh and nothing
+          scrolls, but if the axis settings panel (or a soft keyboard)
+          outgrows a short viewport, the page can scroll instead of
+          clipping the lower controls */}
+      <div className="relative z-10 container mx-auto h-full sm:h-auto px-4 py-2 sm:py-8 md:py-16 flex flex-col items-center gap-2 sm:gap-8 md:gap-12 overflow-y-auto sm:overflow-visible">
         {/* Language Switcher — in-flow above the title on mobile so it can
             never overlap the centered heading on narrow screens */}
         <div className="w-full flex justify-end shrink-0 sm:absolute sm:top-4 sm:right-4 sm:w-auto">
@@ -159,7 +163,7 @@ function HomeContent() {
 
         {/* Visualization Section — on mobile it takes all remaining
             viewport height so the canvas bottom edge is always on screen */}
-        <div className="w-full max-w-4xl flex-1 min-h-0 flex flex-col sm:flex-none sm:block animate-in fade-in slide-in-from-bottom-8 duration-700">
+        <div className="w-full max-w-4xl flex-1 min-h-[280px] sm:min-h-0 flex flex-col sm:flex-none sm:block animate-in fade-in slide-in-from-bottom-8 duration-700">
           <NuanceMap
             data={data}
             xAxisLabel={xAxisLabel}
