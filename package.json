@@ -8,19 +8,20 @@
     "start": "next start",
     "lint": "biome lint ./src",
     "format": "biome format --write ./src",
-    "check": "biome check --write ./src"
+    "check": "biome check --write ./src",
+    "postinstall": "node scripts/ts7-compat.cjs"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
-    "@xyflow/react": "^12.10.1",
+    "@xyflow/react": "^12.11.2",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.34.2",
-    "lucide-react": "^0.574.0",
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.24.0",
     "next": "16.2.10",
-    "openai": "^6.22.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "tailwind-merge": "^3.4.1"
+    "openai": "^6.47.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tailwind-merge": "^3.6.0"
   },
   "pnpm": {
     "overrides": {
@@ -28,12 +29,12 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.3",
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@biomejs/biome": "^2.5.4",
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "tailwindcss": "^4.3.2",
+    "typescript": "^7.0.2"
   }
 }

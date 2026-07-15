@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  typescript: {
+    // TypeScript 7 removed the programmatic API that Next.js uses for
+    // built-in type checking. We run `tsc --noEmit` separately instead.
+    ignoreBuildErrors: true,
+  },
   async headers() {
     return [
       {
