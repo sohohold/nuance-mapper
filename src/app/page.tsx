@@ -13,7 +13,7 @@ const NuanceMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-100 flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         <p>Loading...</p>
       </div>
     ),
@@ -135,8 +135,8 @@ function HomeContent() {
     // viewport, so the page never scrolls and only the canvas pans
     <main className="h-dvh sm:h-auto sm:min-h-screen relative overflow-hidden bg-[#0f172a] text-white selection:bg-indigo-500/30">
       {/* Dynamic Background Elements */}
-      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-purple-600/30 blur-[120px] animate-pulse" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
+      <div className="absolute top-[-10%] left-[-10%] w-125 h-125 rounded-full bg-purple-600/30 blur-[120px] animate-pulse" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-125 h-125 rounded-full bg-blue-600/30 blur-[120px] animate-pulse delay-1000" />
 
       {/* overflow-y-auto: normally everything fits h-dvh and nothing
           scrolls, but if the axis settings panel (or a soft keyboard)
@@ -163,7 +163,7 @@ function HomeContent() {
 
         {/* Visualization Section — on mobile it takes all remaining
             viewport height so the canvas bottom edge is always on screen */}
-        <div className="w-full max-w-4xl flex-1 min-h-[280px] sm:min-h-0 flex flex-col sm:flex-none sm:block animate-in fade-in slide-in-from-bottom-8 duration-700">
+        <div className="w-full max-w-4xl flex-1 min-h-70 sm:min-h-0 flex flex-col sm:flex-none sm:block animate-in fade-in slide-in-from-bottom-8 duration-700">
           <NuanceMap
             data={data}
             xAxisLabel={xAxisLabel}

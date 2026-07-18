@@ -426,7 +426,7 @@ function NuanceMapContent({
 
   if (!data || data.length === 0) {
     return (
-      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-100 flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         {isLoading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white/40" />
@@ -442,7 +442,7 @@ function NuanceMapContent({
   return (
     <div
       ref={containerRef}
-      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
+      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-175 bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
         nodes={nodes}
@@ -515,7 +515,7 @@ function NuanceMapContent({
             }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             ref={tooltipRef}
-            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[min(280px,80vw)] z-100 pointer-events-auto"
+            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-50 max-w-[min(280px,80vw)] z-100 pointer-events-auto"
             style={{
               left: hoverInfo.x + shift.dx,
               top: hoverInfo.y + shift.dy,
@@ -523,7 +523,7 @@ function NuanceMapContent({
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
           >
-            <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+            <div className="flex flex-col gap-3 max-h-75 overflow-y-auto custom-scrollbar">
               {hoverInfo.items.map((item, idx) => (
                 <div
                   key={`${item.word}-${item.x}-${item.y}`}
