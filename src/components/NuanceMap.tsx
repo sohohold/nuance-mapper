@@ -78,7 +78,7 @@ function useIsMobile() {
 interface WordNodeData {
   items: NuanceData[];
   onDotEnter: (
-    event: React.MouseEvent<HTMLElement>,
+    event: React.SyntheticEvent<HTMLElement>,
     items: NuanceData[],
   ) => void;
   onDotLeave: () => void;
@@ -104,7 +104,10 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
         type="button"
         className="pointer-events-auto cursor-pointer p-2 -m-2 group/dot border-0 bg-transparent"
         onMouseEnter={(e) => data.onDotEnter(e, items)}
+        onFocus={(e) => data.onDotEnter(e, items)}
+        onClick={(e) => data.onDotEnter(e, items)}
         onMouseLeave={data.onDotLeave}
+        onPointerDown={(e) => e.stopPropagation()}
         aria-label={firstItem.word}
       >
         <span
@@ -292,7 +295,7 @@ function NuanceMapContent({
   }, []);
 
   const onDotEnter = useCallback(
-    (event: React.MouseEvent<HTMLElement>, items: NuanceData[]) => {
+    (event: React.SyntheticEvent<HTMLElement>, items: NuanceData[]) => {
       cancelHide();
       const container = containerRef.current;
       if (!container) return;
