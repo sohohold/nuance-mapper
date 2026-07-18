@@ -38,7 +38,20 @@ function buildCandidates(): ModelCandidate[] {
   const out: ModelCandidate[] = [];
   for (const provider of MODEL_PROVIDERS) {
     const apiKey = process.env[provider.apiKeyEnv];
-    if (apiKey) out.push({ ...provider, apiKey });
+    if (!apiKey) continue;
+
+    // OpenRouter's "openrouter/free" is a model-router fallback rather than a
+    // provider fallback, so keep each preferred model as its own hedged
+    // candidate. If a listed concrete free model fails or returns unusable
+    // output, the normal failover ladder can retry the router model next.
+    if (provider.provider === "openrouter") {
+      for (const model of provider.models) {
+        out.push({ ...provider, apiKey, models: [model] });
+      }
+      continue;
+    }
+
+    out.push({ ...provider, apiKey });
   }
   return out;
 }
