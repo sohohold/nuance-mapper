@@ -100,18 +100,20 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
       {/* Only the dot triggers the tooltip — the label is display-only, so
           the tap target is unambiguous. Padding widens the hit area for
           touch without changing the visual size. */}
-      <div
-        className="pointer-events-auto cursor-pointer p-2 -m-2 group/dot"
+      <button
+        type="button"
+        className="pointer-events-auto cursor-pointer p-2 -m-2 group/dot border-0 bg-transparent"
         onMouseEnter={(e) => data.onDotEnter(e, items)}
         onMouseLeave={data.onDotLeave}
+        aria-label={firstItem.word}
       >
-        <div
+        <span
           className={cn(
-            "w-4 h-4 sm:w-3 sm:h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover/dot:scale-150",
+            "block w-4 h-4 sm:w-3 sm:h-3 rounded-full border border-white/80 shadow-[0_0_10px_rgba(255,255,255,0.3)] transition-transform group-hover/dot:scale-150",
             QUADRANT_BG[quadrantIndex(firstItem.x, firstItem.y)],
           )}
         />
-      </div>
+      </button>
       <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
         {firstItem.word}
         {items.length > 1 && (
@@ -493,7 +495,7 @@ function NuanceMapContent({
             <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
               {hoverInfo.items.map((item, idx) => (
                 <div
-                  key={`${item.word}-${idx}`}
+                  key={`${item.word}-${item.x}-${item.y}`}
                   className={cn(
                     "flex flex-col gap-1",
                     idx !== 0 && "pt-3 border-t border-slate-100",
