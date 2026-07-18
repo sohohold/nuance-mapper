@@ -26,6 +26,17 @@ class AllModelsFailedError extends Error {
   }
 }
 
+class CandidateAttemptsFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly bestEffort: NuanceItem[],
+    public readonly allRateLimited: boolean,
+  ) {
+    super(message);
+    this.name = "CandidateAttemptsFailedError";
+  }
+}
+
 interface ModelCandidate extends ModelProviderConfig {
   apiKey: string;
 }
@@ -38,20 +49,7 @@ function buildCandidates(): ModelCandidate[] {
   const out: ModelCandidate[] = [];
   for (const provider of MODEL_PROVIDERS) {
     const apiKey = process.env[provider.apiKeyEnv];
-    if (!apiKey) continue;
-
-    // OpenRouter's "openrouter/free" is a model-router fallback rather than a
-    // provider fallback, so keep each preferred model as its own hedged
-    // candidate. If a listed concrete free model fails or returns unusable
-    // output, the normal failover ladder can retry the router model next.
-    if (provider.provider === "openrouter") {
-      for (const model of provider.models) {
-        out.push({ ...provider, apiKey, models: [model] });
-      }
-      continue;
-    }
-
-    out.push({ ...provider, apiKey });
+    if (apiKey) out.push({ ...provider, apiKey });
   }
   return out;
 }
@@ -432,14 +430,11 @@ export async function POST(req: Request) {
     // ── Helper: call a single model, returns sanitized items ─────────
     async function callModel(
       candidate: ModelCandidate,
+      model: string,
       signal: AbortSignal,
     ): Promise<NuanceItem[]> {
-      const model = await resolveModel(candidate);
       const label = `${candidate.provider}:${model}`;
       const toolOutput = candidate.toolOutput;
-      if (model !== candidate.models[0]) {
-        console.log(`Resolved model for ${candidate.provider}: ${model}`);
-      }
       const result = await clientFor(candidate).chat.completions.create(
         {
           model,
@@ -479,6 +474,55 @@ export async function POST(req: Request) {
           : message?.content;
       if (!content) throw new Error(`${label}: empty content`);
       return sanitizeItems(parseModelContent(content), axisMax);
+    }
+
+    async function callCandidate(
+      candidate: ModelCandidate,
+      signal: AbortSignal,
+    ): Promise<NuanceItem[]> {
+      const primaryModel = await resolveModel(candidate);
+      const primaryIndex = Math.max(candidate.models.indexOf(primaryModel), 0);
+      const models = candidate.sequentialModelFallback
+        ? candidate.models.slice(primaryIndex)
+        : [primaryModel];
+      const errors: string[] = [];
+      let bestEffort: NuanceItem[] = [];
+      let allRateLimited = true;
+
+      if (primaryModel !== candidate.models[0]) {
+        console.log(
+          `Resolved model for ${candidate.provider}: ${primaryModel}`,
+        );
+      }
+
+      for (const model of models) {
+        const label = `${candidate.provider}:${model}`;
+        if (model !== primaryModel) {
+          console.log(`Trying sequential fallback: ${label}`);
+        }
+
+        try {
+          const sanitized = await callModel(candidate, model, signal);
+          const issue = qualityIssue(sanitized);
+          if (!issue) return sanitized;
+          if (sanitized.length > bestEffort.length) bestEffort = sanitized;
+          errors.push(`${label}: low quality (${issue})`);
+          allRateLimited = false;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          const status = (error as { status?: unknown } | null)?.status;
+          const rateLimited = status === 429 || /^429\b/.test(message);
+          if (!rateLimited) allRateLimited = false;
+          errors.push(`${label}: ${message}`);
+        }
+      }
+
+      throw new CandidateAttemptsFailedError(
+        errors.join(" / "),
+        bestEffort,
+        allRateLimited,
+      );
     }
 
     // ── Hedged race: first *valid* result wins ────────────────────────
@@ -563,18 +607,10 @@ export async function POST(req: Request) {
             }
           };
 
-          callModel(candidate, controller.signal)
+          callCandidate(candidate, controller.signal)
             .then((sanitized) => {
               clearTimeout(timeoutTimer);
               if (settled) return;
-              const issue = qualityIssue(sanitized);
-              if (issue) {
-                if (sanitized.length > bestEffort.length) {
-                  bestEffort = sanitized;
-                }
-                onFailure(`low quality (${issue})`);
-                return;
-              }
               settled = true;
               console.log(`Winner: ${label} (${sanitized.length} items)`);
               clearTimers();
@@ -585,11 +621,18 @@ export async function POST(req: Request) {
             })
             .catch((err: unknown) => {
               clearTimeout(timeoutTimer);
+              if (
+                err instanceof CandidateAttemptsFailedError &&
+                err.bestEffort.length > bestEffort.length
+              ) {
+                bestEffort = err.bestEffort;
+              }
               const message = err instanceof Error ? err.message : String(err);
-              // Prefer the SDK's structured status over parsing the message,
-              // which not every provider/SDK version prefixes with the code
-              const status = (err as { status?: unknown } | null)?.status;
-              onFailure(message, status === 429 || /^429\b/.test(message));
+              onFailure(
+                message,
+                err instanceof CandidateAttemptsFailedError &&
+                  err.allRateLimited,
+              );
             });
 
           if (started < candidates.length) {
