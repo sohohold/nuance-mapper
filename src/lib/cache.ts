@@ -1,21 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CACHE_CONFIG } from "@/lib/config";
 
 interface CacheEntry<T> {
   key: string;
   value: T;
   createdAt: number;
 }
-
-const CACHE_MAX = 200;
-// Entries are invalidated 30 days after generation
-const TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const TTL_SECONDS = Math.floor(TTL_MS / 1000);
-const REDIS_PREFIX = "nuance:v1:";
-// A stalled Redis endpoint must degrade to a quick cache miss, not block
-// generation until the platform/function timeout
-const REDIS_TIMEOUT_MS = 2_000;
 
 // ── Upstash Redis (REST) backend ─────────────────────────────────────
 // Preferred when configured: survives serverless cold starts and is
@@ -33,10 +25,10 @@ async function redisGet(key: string): Promise<unknown[] | undefined> {
   const config = redisConfig();
   if (!config) return undefined;
   const res = await fetch(
-    `${config.url}/get/${encodeURIComponent(REDIS_PREFIX + key)}`,
+    `${config.url}/get/${encodeURIComponent(CACHE_CONFIG.redisKeyPrefix + key)}`,
     {
       headers: { Authorization: `Bearer ${config.token}` },
-      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(CACHE_CONFIG.redisTimeoutMs),
     },
   );
   if (!res.ok) throw new Error(`Redis GET failed: ${res.status}`);
@@ -49,12 +41,12 @@ async function redisSet(key: string, value: unknown[]): Promise<void> {
   const config = redisConfig();
   if (!config) return;
   const res = await fetch(
-    `${config.url}/set/${encodeURIComponent(REDIS_PREFIX + key)}?EX=${TTL_SECONDS}`,
+    `${config.url}/set/${encodeURIComponent(CACHE_CONFIG.redisKeyPrefix + key)}?EX=${Math.floor(CACHE_CONFIG.ttlMs / 1000)}`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${config.token}` },
       body: JSON.stringify(value),
-      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(CACHE_CONFIG.redisTimeoutMs),
     },
   );
   if (!res.ok) throw new Error(`Redis SET failed: ${res.status}`);
@@ -87,7 +79,7 @@ function resolveCacheFile(): string {
 }
 
 function isExpired(entry: CacheEntry<unknown[]>): boolean {
-  return Date.now() - entry.createdAt > TTL_MS;
+  return Date.now() - entry.createdAt > CACHE_CONFIG.ttlMs;
 }
 
 function loadFromDisk() {
@@ -148,7 +140,7 @@ export async function cacheSet<T>(key: string, value: T[]): Promise<void> {
     return;
   }
   loadFromDisk();
-  if (mem.size >= CACHE_MAX) {
+  if (mem.size >= CACHE_CONFIG.maxEntries) {
     const oldest = mem.keys().next().value;
     if (oldest !== undefined) mem.delete(oldest);
   }
