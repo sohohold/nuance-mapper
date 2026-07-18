@@ -30,6 +30,8 @@ export interface ModelProviderConfig {
   models: readonly string[];
   /** Optional request timeout override for slower providers. */
   requestTimeoutMs?: number;
+  /** Retry later models serially after an error or unusable response. */
+  sequentialModelFallback?: boolean;
   /** Optional tool-call output settings for providers needing stricter JSON. */
   toolOutput?: ModelToolOutputConfig;
 }
@@ -72,6 +74,7 @@ export const MODEL_PROVIDERS = [
     baseURL: "https://openrouter.ai/api/v1",
     models: ["openai/gpt-oss-20b:free", "openrouter/free"],
     requestTimeoutMs: 55 * SECOND_MS,
+    sequentialModelFallback: true,
     toolOutput: {
       maxCompletionTokens: 4_000,
       reasoningEffort: "low",

@@ -26,6 +26,17 @@ class AllModelsFailedError extends Error {
   }
 }
 
+class CandidateAttemptsFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly bestEffort: NuanceItem[],
+    public readonly allRateLimited: boolean,
+  ) {
+    super(message);
+    this.name = "CandidateAttemptsFailedError";
+  }
+}
+
 interface ModelCandidate extends ModelProviderConfig {
   apiKey: string;
 }
@@ -419,14 +430,11 @@ export async function POST(req: Request) {
     // ── Helper: call a single model, returns sanitized items ─────────
     async function callModel(
       candidate: ModelCandidate,
+      model: string,
       signal: AbortSignal,
     ): Promise<NuanceItem[]> {
-      const model = await resolveModel(candidate);
       const label = `${candidate.provider}:${model}`;
       const toolOutput = candidate.toolOutput;
-      if (model !== candidate.models[0]) {
-        console.log(`Resolved model for ${candidate.provider}: ${model}`);
-      }
       const result = await clientFor(candidate).chat.completions.create(
         {
           model,
@@ -468,6 +476,64 @@ export async function POST(req: Request) {
       return sanitizeItems(parseModelContent(content), axisMax);
     }
 
+    async function callCandidate(
+      candidate: ModelCandidate,
+      signal: AbortSignal,
+    ): Promise<NuanceItem[]> {
+      const primaryModel = await resolveModel(candidate);
+      const primaryIndex = Math.max(candidate.models.indexOf(primaryModel), 0);
+      const models = candidate.sequentialModelFallback
+        ? candidate.models.slice(primaryIndex)
+        : [primaryModel];
+      const errors: string[] = [];
+      let bestEffort: NuanceItem[] = [];
+      let allRateLimited = true;
+      const requestTimeoutMs =
+        candidate.requestTimeoutMs ??
+        GENERATION_CONFIG.requests.defaultTimeoutMs;
+
+      if (primaryModel !== candidate.models[0]) {
+        console.log(
+          `Resolved model for ${candidate.provider}: ${primaryModel}`,
+        );
+      }
+
+      for (const model of models) {
+        const label = `${candidate.provider}:${model}`;
+        if (model !== primaryModel) {
+          console.log(`Trying sequential fallback: ${label}`);
+        }
+
+        try {
+          // The parent signal only cancels losing hedges. A fresh timeout for
+          // every model gives a sequential fallback its full request budget.
+          const attemptSignal = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(requestTimeoutMs),
+          ]);
+          const sanitized = await callModel(candidate, model, attemptSignal);
+          const issue = qualityIssue(sanitized);
+          if (!issue) return sanitized;
+          if (sanitized.length > bestEffort.length) bestEffort = sanitized;
+          errors.push(`${label}: low quality (${issue})`);
+          allRateLimited = false;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          const status = (error as { status?: unknown } | null)?.status;
+          const rateLimited = status === 429 || /^429\b/.test(message);
+          if (!rateLimited) allRateLimited = false;
+          errors.push(`${label}: ${message}`);
+        }
+      }
+
+      throw new CandidateAttemptsFailedError(
+        errors.join(" / "),
+        bestEffort,
+        allRateLimited,
+      );
+    }
+
     // ── Hedged race: first *valid* result wins ────────────────────────
     // `degraded` marks a best-effort result that missed the quality gate
     function hedgedGenerate(): Promise<{
@@ -476,7 +542,6 @@ export async function POST(req: Request) {
     }> {
       return new Promise((resolve, reject) => {
         const controllers: AbortController[] = [];
-        const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
         // Single pending stagger timer — cleared on every start so an
         // immediate failover never leaves a stale timer that would launch
         // extra models later
@@ -496,7 +561,6 @@ export async function POST(req: Request) {
             clearTimeout(staggerTimer);
             staggerTimer = null;
           }
-          for (const t of timeoutTimers) clearTimeout(t);
         };
 
         const startNext = () => {
@@ -511,14 +575,6 @@ export async function POST(req: Request) {
           console.log(`Trying model: ${label}`);
           const controller = new AbortController();
           controllers.push(controller);
-
-          // Abort stalled calls so `failed` can always reach MODELS.length
-          const timeoutTimer = setTimeout(
-            () => controller.abort(),
-            candidate.requestTimeoutMs ??
-              GENERATION_CONFIG.requests.defaultTimeoutMs,
-          );
-          timeoutTimers.push(timeoutTimer);
 
           const onFailure = (message: string, rateLimited = false) => {
             console.warn(`Model failed: ${label}: ${message}`);
@@ -550,18 +606,9 @@ export async function POST(req: Request) {
             }
           };
 
-          callModel(candidate, controller.signal)
+          callCandidate(candidate, controller.signal)
             .then((sanitized) => {
-              clearTimeout(timeoutTimer);
               if (settled) return;
-              const issue = qualityIssue(sanitized);
-              if (issue) {
-                if (sanitized.length > bestEffort.length) {
-                  bestEffort = sanitized;
-                }
-                onFailure(`low quality (${issue})`);
-                return;
-              }
               settled = true;
               console.log(`Winner: ${label} (${sanitized.length} items)`);
               clearTimers();
@@ -571,12 +618,18 @@ export async function POST(req: Request) {
               resolve({ items: sanitized, degraded: false });
             })
             .catch((err: unknown) => {
-              clearTimeout(timeoutTimer);
+              if (
+                err instanceof CandidateAttemptsFailedError &&
+                err.bestEffort.length > bestEffort.length
+              ) {
+                bestEffort = err.bestEffort;
+              }
               const message = err instanceof Error ? err.message : String(err);
-              // Prefer the SDK's structured status over parsing the message,
-              // which not every provider/SDK version prefixes with the code
-              const status = (err as { status?: unknown } | null)?.status;
-              onFailure(message, status === 429 || /^429\b/.test(message));
+              onFailure(
+                message,
+                err instanceof CandidateAttemptsFailedError &&
+                  err.allRateLimited,
+              );
             });
 
           if (started < candidates.length) {
