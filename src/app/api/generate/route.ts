@@ -488,6 +488,9 @@ export async function POST(req: Request) {
       const errors: string[] = [];
       let bestEffort: NuanceItem[] = [];
       let allRateLimited = true;
+      const requestTimeoutMs =
+        candidate.requestTimeoutMs ??
+        GENERATION_CONFIG.requests.defaultTimeoutMs;
 
       if (primaryModel !== candidate.models[0]) {
         console.log(
@@ -502,7 +505,13 @@ export async function POST(req: Request) {
         }
 
         try {
-          const sanitized = await callModel(candidate, model, signal);
+          // The parent signal only cancels losing hedges. A fresh timeout for
+          // every model gives a sequential fallback its full request budget.
+          const attemptSignal = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(requestTimeoutMs),
+          ]);
+          const sanitized = await callModel(candidate, model, attemptSignal);
           const issue = qualityIssue(sanitized);
           if (!issue) return sanitized;
           if (sanitized.length > bestEffort.length) bestEffort = sanitized;
@@ -533,7 +542,6 @@ export async function POST(req: Request) {
     }> {
       return new Promise((resolve, reject) => {
         const controllers: AbortController[] = [];
-        const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
         // Single pending stagger timer — cleared on every start so an
         // immediate failover never leaves a stale timer that would launch
         // extra models later
@@ -553,7 +561,6 @@ export async function POST(req: Request) {
             clearTimeout(staggerTimer);
             staggerTimer = null;
           }
-          for (const t of timeoutTimers) clearTimeout(t);
         };
 
         const startNext = () => {
@@ -568,14 +575,6 @@ export async function POST(req: Request) {
           console.log(`Trying model: ${label}`);
           const controller = new AbortController();
           controllers.push(controller);
-
-          // Abort stalled calls so `failed` can always reach MODELS.length
-          const timeoutTimer = setTimeout(
-            () => controller.abort(),
-            candidate.requestTimeoutMs ??
-              GENERATION_CONFIG.requests.defaultTimeoutMs,
-          );
-          timeoutTimers.push(timeoutTimer);
 
           const onFailure = (message: string, rateLimited = false) => {
             console.warn(`Model failed: ${label}: ${message}`);
@@ -609,7 +608,6 @@ export async function POST(req: Request) {
 
           callCandidate(candidate, controller.signal)
             .then((sanitized) => {
-              clearTimeout(timeoutTimer);
               if (settled) return;
               settled = true;
               console.log(`Winner: ${label} (${sanitized.length} items)`);
@@ -620,7 +618,6 @@ export async function POST(req: Request) {
               resolve({ items: sanitized, degraded: false });
             })
             .catch((err: unknown) => {
-              clearTimeout(timeoutTimer);
               if (
                 err instanceof CandidateAttemptsFailedError &&
                 err.bestEffort.length > bestEffort.length
