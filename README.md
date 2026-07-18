@@ -21,6 +21,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 Copy `.env.example` to `.env.local` and set the keys you have. All settings
 are optional — with no LLM key the API returns mock data.
 
+All non-secret tuning values live in `src/lib/config.ts`. Its inline comments
+document the provider ladder, timeouts, generation limits, cache policy, rate
+limit, and map interaction settings. Secrets remain in `.env.local`.
+
 ### LLM providers ($0 operation)
 
 The generate API tries providers in a hedged ladder:
@@ -35,7 +39,7 @@ so deprecated or renamed models degrade gracefully instead of 404ing.
 | `GEMINI_API_KEY` | Google AI Studio | `gemini-flash-lite-latest` → `gemini-flash-latest` → pinned 2.5 ids | ~15 RPM / 1,000+ req/day |
 | `GROQ_API_KEY` | Groq | `openai/gpt-oss-120b` → `openai/gpt-oss-20b` → `llama-3.3-70b-versatile` | 30 RPM / 1,000 req/day |
 | `CEREBRAS_API_KEY` | Cerebras | `gpt-oss-120b` → `zai-glm-4.7` → `qwen-3-32b` → `llama-3.3-70b` | 1M tokens/day |
-| `OPENROUTER_API_KEY` | OpenRouter | `openai/gpt-oss-120b:free` only (all `:free` models share one daily pool) | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
+| `OPENROUTER_API_KEY` | OpenRouter | `openai/gpt-oss-20b:free` → `openrouter/free` automatic fallback | 50 req/day shared (1,000/day after a one-time $10 credit purchase) |
 
 Each provider has its own independent daily quota, so every additional key
 multiplies availability. To guarantee $0, use keys from accounts **without

@@ -6,6 +6,7 @@ import {
   Controls,
   MiniMap,
   type Node,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -22,6 +23,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Copy, Loader2, Move } from "lucide-react";
+import { MAP_CONFIG } from "@/lib/config";
 import { useDictionary } from "@/lib/i18n";
 import type { NuanceData } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -34,11 +36,6 @@ interface NuanceMapProps {
   yAxisLabel: string;
   isLoading?: boolean;
 }
-
-// px per coordinate unit — compressed on mobile so labels render larger
-// relative to the point spread after fitView
-const SCALE_DESKTOP = 50;
-const SCALE_MOBILE = 20;
 
 // Quadrant color, shared by nodes, minimap and tooltip:
 // 0 = x>0,y>0  1 = x>0,y<=0  2 = x<=0,y>0  3 = x<=0,y<=0
@@ -65,7 +62,9 @@ function useCounterScale(): number {
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 640px)");
+    const mq = window.matchMedia(
+      `(max-width: ${MAP_CONFIG.mobileBreakpointPx}px)`,
+    );
     const update = () => setIsMobile(mq.matches);
     update();
     mq.addEventListener("change", update);
@@ -130,8 +129,7 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
 };
 
 // Custom Node for the Origin lines
-const ORIGIN_SIZE = 2000; // px - size of the origin node container
-const ORIGIN_CENTER = ORIGIN_SIZE / 2;
+const ORIGIN_CENTER = MAP_CONFIG.originSizePx / 2;
 
 const OriginNode = ({ data }: { data: { scale: number } }) => {
   const scale = data.scale;
@@ -139,19 +137,31 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
   // Lines/ticks must stay visible after fitView zooms out — thicker when
   // the coordinate scale is compressed (mobile) since zoom shrinks them.
   // Counter-scaled so the lines don't turn into thick bars when zoomed in.
-  const lineWidth = (scale < 30 ? 5 : 3) * counterScale;
-  const tickCls = scale < 30 ? "w-[3px] h-4" : "w-[2px] h-3";
-  const tickClsY = scale < 30 ? "h-[3px] w-4" : "h-[2px] w-3";
+  const isCompact = scale < MAP_CONFIG.axisLine.compactScaleThresholdPx;
+  const lineWidth =
+    (isCompact
+      ? MAP_CONFIG.axisLine.mobileWidthPx
+      : MAP_CONFIG.axisLine.desktopWidthPx) * counterScale;
+  const tickCls = isCompact ? "w-[3px] h-4" : "w-[2px] h-3";
+  const tickClsY = isCompact ? "h-[3px] w-4" : "h-[2px] w-3";
   const tickLabelCls =
     "text-white/50 text-[14px] sm:text-[10px] select-none font-mono bg-black/20 px-1 rounded whitespace-nowrap";
   // Even tick marks only (-10, -8, … +10) so labels don't crowd each other
-  const ticks = Array.from({ length: 11 }, (_, i) => (i - 5) * 2).filter(
-    (t) => t !== 0,
-  );
+  const ticks = Array.from(
+    {
+      length:
+        (MAP_CONFIG.ticks.max - MAP_CONFIG.ticks.min) / MAP_CONFIG.ticks.step +
+        1,
+    },
+    (_, i) => MAP_CONFIG.ticks.min + i * MAP_CONFIG.ticks.step,
+  ).filter((tick) => tick !== 0);
 
   return (
     <div
-      style={{ width: ORIGIN_SIZE, height: ORIGIN_SIZE }}
+      style={{
+        width: MAP_CONFIG.originSizePx,
+        height: MAP_CONFIG.originSizePx,
+      }}
       className="relative pointer-events-none"
     >
       {/* Center Origin Dot */}
@@ -170,7 +180,7 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
         style={{
           left: 0,
           top: ORIGIN_CENTER - lineWidth / 2,
-          width: ORIGIN_SIZE,
+          width: MAP_CONFIG.originSizePx,
           height: lineWidth,
         }}
       />
@@ -181,7 +191,7 @@ const OriginNode = ({ data }: { data: { scale: number } }) => {
           left: ORIGIN_CENTER - lineWidth / 2,
           top: 0,
           width: lineWidth,
-          height: ORIGIN_SIZE,
+          height: MAP_CONFIG.originSizePx,
         }}
       />
 
@@ -243,7 +253,7 @@ function NuanceMapContent({
   const { t } = useDictionary();
   const { fitView } = useReactFlow();
   const isMobile = useIsMobile();
-  const scale = isMobile ? SCALE_MOBILE : SCALE_DESKTOP;
+  const scale = isMobile ? MAP_CONFIG.scale.mobile : MAP_CONFIG.scale.desktop;
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
@@ -268,7 +278,10 @@ function NuanceMapContent({
 
   const scheduleHide = useCallback(() => {
     cancelHide();
-    hideTimerRef.current = setTimeout(() => setHoverInfo(null), 200);
+    hideTimerRef.current = setTimeout(
+      () => setHoverInfo(null),
+      MAP_CONFIG.tooltip.hideDelayMs,
+    );
   }, [cancelHide]);
 
   const hideNow = useCallback(() => {
@@ -288,7 +301,10 @@ function NuanceMapContent({
       await navigator.clipboard.writeText(word);
       setCopiedWord(word);
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = setTimeout(() => setCopiedWord(null), 1500);
+      copiedTimerRef.current = setTimeout(
+        () => setCopiedWord(null),
+        MAP_CONFIG.tooltip.copiedIndicatorMs,
+      );
     } catch {
       // Clipboard unavailable (permission denied / insecure context)
     }
@@ -309,7 +325,8 @@ function NuanceMapContent({
 
       const x = dotRect.left + dotRect.width / 2 - containerRect.left;
       const below =
-        dotRect.top - containerRect.top < containerRect.height * 0.4;
+        dotRect.top - containerRect.top <
+        containerRect.height * MAP_CONFIG.tooltip.flipThresholdRatio;
       const y = below
         ? nodeRect.bottom - containerRect.top
         : dotRect.top - containerRect.top;
@@ -327,11 +344,13 @@ function NuanceMapContent({
     const el = tooltipRef.current;
     const container = containerRef.current;
     if (!hoverInfo || !el || !container) return;
-    const pad = 8;
+    const pad = MAP_CONFIG.tooltip.edgePaddingPx;
     const w = el.offsetWidth;
     const h = el.offsetHeight;
     const rawLeft = hoverInfo.x - w / 2;
-    const rawTop = hoverInfo.below ? hoverInfo.y + 15 : hoverInfo.y - h - 15;
+    const rawTop = hoverInfo.below
+      ? hoverInfo.y + MAP_CONFIG.tooltip.verticalGapPx
+      : hoverInfo.y - h - MAP_CONFIG.tooltip.verticalGapPx;
     const clamp = (v: number, min: number, max: number) =>
       Math.min(Math.max(v, min), Math.max(max, min));
     const dx = clamp(rawLeft, pad, container.clientWidth - w - pad) - rawLeft;
@@ -362,7 +381,8 @@ function NuanceMapContent({
       { x: number; y: number; items: NuanceData[] }
     >();
     data.forEach((d) => {
-      const key = `${Math.round(d.x * 1000) / 1000},${Math.round(d.y * 1000) / 1000}`;
+      const factor = MAP_CONFIG.coordinateRoundingFactor;
+      const key = `${Math.round(d.x * factor) / factor},${Math.round(d.y * factor) / factor}`;
       if (!groups.has(key)) {
         groups.set(key, { x: d.x, y: d.y, items: [] });
       }
@@ -393,18 +413,20 @@ function NuanceMapContent({
       const timer = setTimeout(() => {
         fitView({
           nodes: wordNodes,
-          duration: 800,
+          duration: MAP_CONFIG.fitView.durationMs,
           // Mobile padding also keeps edge words clear of the axis legend
-          padding: isMobile ? 0.15 : 0.2,
+          padding: isMobile
+            ? MAP_CONFIG.fitView.mobilePadding
+            : MAP_CONFIG.fitView.desktopPadding,
         });
-      }, 300);
+      }, MAP_CONFIG.fitView.settleDelayMs);
       return () => clearTimeout(timer);
     }
   }, [nodes, fitView, isMobile]);
 
   if (!data || data.length === 0) {
     return (
-      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-[400px] flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
+      <div className="w-full flex-1 min-h-0 sm:flex-none sm:h-100 flex items-center justify-center text-white/30 border-2 border-dashed border-white/10 rounded-3xl bg-white/5 backdrop-blur-sm">
         {isLoading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white/40" />
@@ -420,15 +442,17 @@ function NuanceMapContent({
   return (
     <div
       ref={containerRef}
-      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-[700px] bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
+      className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-175 bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
         nodes={nodes}
         nodeTypes={nodeTypes}
         onPaneMouseEnter={scheduleHide}
         onMoveStart={hideNow}
-        minZoom={isMobile ? 0.25 : 0.5}
-        maxZoom={4}
+        minZoom={
+          isMobile ? MAP_CONFIG.zoom.mobileMin : MAP_CONFIG.zoom.desktopMin
+        }
+        maxZoom={MAP_CONFIG.zoom.max}
         proOptions={{ hideAttribution: true }}
         className="transition-cursor cursor-grab active:cursor-grabbing"
         nodesDraggable={false}
@@ -440,6 +464,22 @@ function NuanceMapContent({
           color="rgba(255,255,255,0.5)"
           variant={BackgroundVariant.Dots}
         />
+        <Panel
+          position="top-center"
+          className="pointer-events-none z-20! m-2! max-w-[70%] sm:m-3!"
+        >
+          <div className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+            ↑ {yAxisLabel} (+Y)
+          </div>
+        </Panel>
+        <Panel
+          position="center-right"
+          className="pointer-events-none z-20! m-2! max-w-[70%] sm:m-3!"
+        >
+          <div className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+            → {xAxisLabel} (+X)
+          </div>
+        </Panel>
         <Controls className="bg-white/10! backdrop-blur-md! border-white/20! [&>button]:bg-transparent! [&>button]:border-b-white/20! [&>button]:text-white! hover:[&>button]:bg-white/20!" />
         <MiniMap
           className="hidden! sm:block! bg-black/20! backdrop-blur-md! border-white/10! rounded-xl!"
@@ -450,18 +490,6 @@ function NuanceMapContent({
           }}
         />
       </ReactFlow>
-
-      {/* Axis legend pinned to the top-left corner — always legible on any
-          pan/zoom. Kept in a corner because the generator concentrates
-          words at the axis extremes (top-center / right-center). */}
-      <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20 pointer-events-none flex flex-col items-start gap-1 max-w-[70%]">
-        <div className="w-full truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
-          ↑ {yAxisLabel} (+Y)
-        </div>
-        <div className="w-full truncate px-2.5 py-1 sm:px-4 sm:py-1.5 bg-black/50 backdrop-blur-md rounded-full border border-white/20 text-white/90 text-[11px] sm:text-sm font-bold whitespace-nowrap shadow-xl tracking-wider">
-          → {xAxisLabel} (+X)
-        </div>
-      </div>
 
       {/* Custom Tooltip */}
       <AnimatePresence>
@@ -487,7 +515,7 @@ function NuanceMapContent({
             }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             ref={tooltipRef}
-            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-[200px] max-w-[min(280px,80vw)] z-100 pointer-events-auto"
+            className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-50 max-w-[min(280px,80vw)] z-100 pointer-events-auto"
             style={{
               left: hoverInfo.x + shift.dx,
               top: hoverInfo.y + shift.dy,
@@ -495,7 +523,7 @@ function NuanceMapContent({
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
           >
-            <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+            <div className="flex flex-col gap-3 max-h-75 overflow-y-auto custom-scrollbar">
               {hoverInfo.items.map((item, idx) => (
                 <div
                   key={`${item.word}-${item.x}-${item.y}`}

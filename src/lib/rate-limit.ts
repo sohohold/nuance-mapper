@@ -1,3 +1,5 @@
+import { RATE_LIMIT_CONFIG } from "@/lib/config";
+
 interface RateLimitEntry {
   count: number;
   resetAt: number;
@@ -14,7 +16,7 @@ const cleanupTimer = setInterval(() => {
       store.delete(key);
     }
   }
-}, 60_000);
+}, RATE_LIMIT_CONFIG.cleanupIntervalMs);
 cleanupTimer.unref?.();
 
 /**
@@ -23,7 +25,10 @@ cleanupTimer.unref?.();
  */
 export function rateLimit(
   key: string,
-  { limit = 10, windowMs = 60_000 } = {},
+  {
+    limit = RATE_LIMIT_CONFIG.maxRequests,
+    windowMs = RATE_LIMIT_CONFIG.windowMs,
+  } = {},
 ): { success: boolean; retryAfter?: number } {
   const now = Date.now();
   const entry = store.get(key);

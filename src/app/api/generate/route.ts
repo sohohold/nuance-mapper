@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { jsonrepair } from "jsonrepair";
 import OpenAI from "openai";
 import { cacheGet, cacheSet } from "@/lib/cache";
+import {
+  GENERATION_CONFIG,
+  MODEL_PROVIDERS,
+  type ModelProviderConfig,
+} from "@/lib/config";
 import { rateLimit } from "@/lib/rate-limit";
 
 interface NuanceItem {
@@ -20,19 +26,19 @@ class AllModelsFailedError extends Error {
   }
 }
 
-// ── Model ladder across independent free tiers ───────────────────────
-// Rungs from different providers each bring their own daily quota —
-// configure any subset via env keys; unset providers are skipped.
-// OpenRouter is a single rung: all its `:free` models share one
-// per-account daily pool, so extra OpenRouter rungs add no quota.
-interface ModelCandidate {
-  provider: string;
-  baseURL: string;
+class CandidateAttemptsFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly bestEffort: NuanceItem[],
+    public readonly allRateLimited: boolean,
+  ) {
+    super(message);
+    this.name = "CandidateAttemptsFailedError";
+  }
+}
+
+interface ModelCandidate extends ModelProviderConfig {
   apiKey: string;
-  // Latency/throughput-ordered preference list. The first entry the
-  // provider's live /models endpoint currently serves is used, so
-  // deprecations and renames degrade to the next rung instead of 404s.
-  models: string[];
 }
 
 function candidateLabel(c: ModelCandidate): string {
@@ -41,52 +47,9 @@ function candidateLabel(c: ModelCandidate): string {
 
 function buildCandidates(): ModelCandidate[] {
   const out: ModelCandidate[] = [];
-  const gemini = process.env.GEMINI_API_KEY;
-  if (gemini) {
-    out.push({
-      provider: "gemini",
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-      apiKey: gemini,
-      // The rolling -latest aliases always track Google's current
-      // fastest Flash generation; pinned ids are the safety net
-      models: [
-        "gemini-flash-lite-latest",
-        "gemini-flash-latest",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
-      ],
-    });
-  }
-  const groq = process.env.GROQ_API_KEY;
-  if (groq) {
-    out.push({
-      provider: "groq",
-      baseURL: "https://api.groq.com/openai/v1",
-      apiKey: groq,
-      models: [
-        "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b",
-        "llama-3.3-70b-versatile",
-      ],
-    });
-  }
-  const cerebras = process.env.CEREBRAS_API_KEY;
-  if (cerebras) {
-    out.push({
-      provider: "cerebras",
-      baseURL: "https://api.cerebras.ai/v1",
-      apiKey: cerebras,
-      models: ["gpt-oss-120b", "zai-glm-4.7", "qwen-3-32b", "llama-3.3-70b"],
-    });
-  }
-  const openrouter = process.env.OPENROUTER_API_KEY;
-  if (openrouter) {
-    out.push({
-      provider: "openrouter",
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: openrouter,
-      models: ["openai/gpt-oss-120b:free"],
-    });
+  for (const provider of MODEL_PROVIDERS) {
+    const apiKey = process.env[provider.apiKeyEnv];
+    if (apiKey) out.push({ ...provider, apiKey });
   }
   return out;
 }
@@ -95,11 +58,37 @@ function buildCandidates(): ModelCandidate[] {
 // Free-tier providers deprecate and rename their fast models often, so
 // instead of pinning one id, ask the provider which of our preferred
 // models it currently serves and take the first (fastest) match.
-const MODEL_RESOLVE_TIMEOUT_MS = 2_000;
-const MODEL_RESOLVE_TTL_MS = 60 * 60 * 1000;
-// Shorter re-check when the lookup failed or nothing matched
-const MODEL_RESOLVE_RETRY_MS = 5 * 60 * 1000;
 const resolvedModels = new Map<string, { model: string; expiresAt: number }>();
+
+const OPENROUTER_NUANCE_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "submit_nuances",
+    description: "Submit the generated nuance-map entries.",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              word: { type: "string" },
+              x: { type: "number" },
+              y: { type: "number" },
+              nuance: { type: "string" },
+            },
+            required: ["word", "x", "y", "nuance"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["items"],
+      additionalProperties: false,
+    },
+  },
+};
 
 async function resolveModel(c: ModelCandidate): Promise<string> {
   if (c.models.length === 1) return c.models[0];
@@ -109,11 +98,11 @@ async function resolveModel(c: ModelCandidate): Promise<string> {
   // resolution beats blindly retrying the head of the list, which may be
   // exactly the model whose absence demoted us in the first place
   let model = cached?.model ?? c.models[0];
-  let ttl = MODEL_RESOLVE_RETRY_MS;
+  let ttl = GENERATION_CONFIG.modelResolve.retryTtlMs;
   try {
     const res = await fetch(`${c.baseURL.replace(/\/+$/, "")}/models`, {
       headers: { Authorization: `Bearer ${c.apiKey}` },
-      signal: AbortSignal.timeout(MODEL_RESOLVE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(GENERATION_CONFIG.modelResolve.timeoutMs),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { data?: { id?: string }[] };
@@ -124,7 +113,7 @@ async function resolveModel(c: ModelCandidate): Promise<string> {
     const found = c.models.find((m) => available.has(m));
     if (found) {
       model = found;
-      ttl = MODEL_RESOLVE_TTL_MS;
+      ttl = GENERATION_CONFIG.modelResolve.successTtlMs;
     } else {
       console.warn(
         `${c.provider}: none of the preferred models are listed — trying ${model}`,
@@ -166,7 +155,9 @@ function createSSEStream(
       if (index < items.length) {
         // Small stagger between items for visual streaming effect
         if (stagger && index > 0) {
-          await new Promise((r) => setTimeout(r, 40));
+          await new Promise((r) =>
+            setTimeout(r, GENERATION_CONFIG.streamItemDelayMs),
+          );
         }
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(items[index])}\n\n`),
@@ -214,38 +205,45 @@ function stripCodeFences(str: string): string {
 }
 
 // ── Parse model output (tolerates <think> blocks and stray prose) ────
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return JSON.parse(jsonrepair(value));
+  }
+}
+
 function parseModelContent(content: string): NuanceItem[] {
   const s = stripCodeFences(
     content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
   );
   try {
-    return normalizeItems(JSON.parse(s));
+    return normalizeItems(parseJson(s));
   } catch {
     const start = s.indexOf("[");
     const end = s.lastIndexOf("]");
     if (start === -1 || end <= start) throw new Error("No JSON array found");
-    return normalizeItems(JSON.parse(s.slice(start, end + 1)));
+    return normalizeItems(parseJson(s.slice(start, end + 1)));
   }
 }
 
 // ── Sanitize: drop malformed entries, dedupe, clamp coordinates ──────
-// Size caps bound what an over-eager (or hijacked) model response can
-// push into the cache and to clients
-const MAX_ITEMS = 40;
-const MAX_ITEM_WORD_LEN = 60;
-const MAX_NUANCE_LEN = 120;
-
 function sanitizeItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
   const seen = new Set<string>();
   const out: NuanceItem[] = [];
   for (const item of items) {
-    if (out.length >= MAX_ITEMS) break;
+    if (out.length >= GENERATION_CONFIG.output.maxItems) break;
     if (typeof item?.word !== "string" || !item.word.trim()) continue;
     const x = Number(item.x);
     const y = Number(item.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const word = item.word.trim();
-    if (word.length > MAX_ITEM_WORD_LEN || seen.has(word)) continue;
+    if (
+      word.length > GENERATION_CONFIG.output.maxWordLength ||
+      seen.has(word)
+    ) {
+      continue;
+    }
     seen.add(word);
     out.push({
       word,
@@ -253,25 +251,21 @@ function sanitizeItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
       y: Math.max(-axisMax, Math.min(axisMax, y)),
       nuance:
         typeof item.nuance === "string"
-          ? item.nuance.slice(0, MAX_NUANCE_LEN)
+          ? item.nuance.slice(0, GENERATION_CONFIG.output.maxNuanceLength)
           : "",
     });
   }
   return out;
 }
 
-// ── Quality gate: returns a reason string for sparse/degenerate results
-const MIN_ITEMS = 12;
-const MIN_QUADRANTS = 3;
-
 function qualityIssue(items: NuanceItem[]): string | null {
-  if (items.length < MIN_ITEMS) {
+  if (items.length < GENERATION_CONFIG.quality.minItems) {
     return `only ${items.length} valid items`;
   }
   const quadrants = new Set(
     items.map((i) => `${i.x >= 0 ? "R" : "L"}${i.y >= 0 ? "T" : "B"}`),
   );
-  if (quadrants.size < MIN_QUADRANTS) {
+  if (quadrants.size < GENERATION_CONFIG.quality.minQuadrants) {
     return `items cover only ${quadrants.size} quadrants`;
   }
   return null;
@@ -281,12 +275,12 @@ export async function POST(req: Request) {
   // Hoisted so the catch block can fall back to the cache on upstream 429s
   let cacheKey: string | null = null;
   try {
-    // ── Rate limit (10 requests per minute per IP) ───────────────
+    // ── Rate limit per client IP ─────────────────────────────────
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       req.headers.get("x-real-ip") ||
       "unknown";
-    const rl = rateLimit(ip, { limit: 10, windowMs: 60_000 });
+    const rl = rateLimit(ip);
     if (!rl.success) {
       return NextResponse.json(
         { error: "Too many requests", retryAfter: rl.retryAfter },
@@ -307,11 +301,17 @@ export async function POST(req: Request) {
       string,
       unknown
     >;
-    if (typeof word !== "string" || !word.trim() || word.length > 64) {
+    if (
+      typeof word !== "string" ||
+      !word.trim() ||
+      word.length > GENERATION_CONFIG.input.maxWordLength
+    ) {
       return NextResponse.json({ error: "Word is required" }, { status: 400 });
     }
     const isValidAxis = (v: unknown): v is string =>
-      typeof v === "string" && v.trim().length > 0 && v.length <= 80;
+      typeof v === "string" &&
+      v.trim().length > 0 &&
+      v.length <= GENERATION_CONFIG.input.maxAxisLabelLength;
     if (!isValidAxis(xAxis) || !isValidAxis(yAxis)) {
       return NextResponse.json(
         { error: "Axis labels are required" },
@@ -343,14 +343,14 @@ export async function POST(req: Request) {
         [
           {
             word: "MockData 1",
-            x: 5,
-            y: 5,
+            x: GENERATION_CONFIG.mockCoordinateOffset,
+            y: GENERATION_CONFIG.mockCoordinateOffset,
             nuance: "APIキー未設定時のモックデータ",
           },
           {
             word: "MockData 2",
-            x: -5,
-            y: -5,
+            x: -GENERATION_CONFIG.mockCoordinateOffset,
+            y: -GENERATION_CONFIG.mockCoordinateOffset,
             nuance: "環境変数を設定してください",
           },
           { word: word, x: 0, y: 0, nuance: "入力された単語" },
@@ -369,14 +369,14 @@ export async function POST(req: Request) {
           apiKey: c.apiKey,
           // Failover is handled by the hedged race — the SDK's default retries
           // (2 per request) would multiply free-tier usage and stall the ladder
-          maxRetries: 0,
+          maxRetries: GENERATION_CONFIG.requests.sdkMaxRetries,
         });
         clients.set(c.baseURL, client);
       }
       return client;
     };
 
-    const AXIS_MAX_VAL = 10;
+    const axisMax = GENERATION_CONFIG.prompt.axisMax;
 
     const prompt = `
       # Role
@@ -388,23 +388,23 @@ export async function POST(req: Request) {
 
       # Axes Definition (座標軸の定義)
       ## X軸: ${xAxis}
-      -${AXIS_MAX_VAL}: ${xAxis}が最も低い/反対の性質 ← 0: 中立 → +${AXIS_MAX_VAL}: ${xAxis}が最も高い/強い性質
+      -${axisMax}: ${xAxis}が最も低い/反対の性質 ← 0: 中立 → +${axisMax}: ${xAxis}が最も高い/強い性質
 
       ## Y軸: ${yAxis}
-      -${AXIS_MAX_VAL}: ${yAxis}が最も低い/反対の性質 ← 0: 中立 → +${AXIS_MAX_VAL}: ${yAxis}が最も高い/強い性質
+      -${axisMax}: ${yAxis}が最も低い/反対の性質 ← 0: 中立 → +${axisMax}: ${yAxis}が最も高い/強い性質
 
       # Zone-Based Generation Strategy（ゾーン分散戦略）
-      座標平面を以下の9ゾーンに分け、**各ゾーンに最低1つ、合計20個**の単語を配置してください。
+      座標平面を以下の9ゾーンに分け、**各ゾーンに最低1つ、合計${GENERATION_CONFIG.prompt.targetItems}個**の単語を配置してください。
       ゾーン名は出力に含めないでください。
 
       1. 右上 (x>0, y>0): ${xAxis}が高く、${yAxis}も高い表現
       2. 右下 (x>0, y<0): ${xAxis}が高いが、${yAxis}は低い表現
       3. 左上 (x<0, y>0): ${xAxis}が低いが、${yAxis}は高い表現
       4. 左下 (x<0, y<0): ${xAxis}も${yAxis}も低い表現
-      5. 右端 (x≈+${AXIS_MAX_VAL}): ${xAxis}が極端に高い表現
-      6. 左端 (x≈-${AXIS_MAX_VAL}): ${xAxis}が極端に低い表現
-      7. 上端 (y≈+${AXIS_MAX_VAL}): ${yAxis}が極端に高い表現
-      8. 下端 (y≈-${AXIS_MAX_VAL}): ${yAxis}が極端に低い表現
+      5. 右端 (x≈+${axisMax}): ${xAxis}が極端に高い表現
+      6. 左端 (x≈-${axisMax}): ${xAxis}が極端に低い表現
+      7. 上端 (y≈+${axisMax}): ${yAxis}が極端に高い表現
+      8. 下端 (y≈-${axisMax}): ${yAxis}が極端に低い表現
       9. 中央 (x≈0, y≈0): 中立的な表現
 
       # Output Format (出力形式)
@@ -413,37 +413,28 @@ export async function POST(req: Request) {
       [
         {
           "word": "単語",
-          "x": 数値(-${AXIS_MAX_VAL}〜${AXIS_MAX_VAL}),
-          "y": 数値(-${AXIS_MAX_VAL}〜${AXIS_MAX_VAL}),
+          "x": 数値(-${axisMax}〜${axisMax}),
+          "y": 数値(-${axisMax}〜${axisMax}),
           "nuance": "その言葉が持つ微細なニュアンスの短い解説（20文字以内）"
         },
         ...
       ]
 
       # Constraints
-      1. **座標空間全体をカバーすること。** 4象限すべてに単語が存在し、|x|≥7 や |y|≥7 の端にも配置すること。
+      1. **座標空間全体をカバーすること。** 4象限すべてに単語が存在し、|x|≥${GENERATION_CONFIG.prompt.edgeThreshold} や |y|≥${GENERATION_CONFIG.prompt.edgeThreshold} の端にも配置すること。
       2. 入力語「${word}」と意味的に関連がある語を選ぶこと。ただし、軸の端をカバーするためにやや広い関連語も許容する。
       3. 入力語「${word}」の品詞に合わせて適切な類語を選ぶこと。
       4. 同じような座標に複数の単語が集中しないこと。
     `;
 
-    // Hedged requests: start the next candidate only if the previous one
-    // hasn't answered within this window (or failed). Keeps free-tier
-    // request usage low (usually 1-2 calls) while bounding latency.
-    const HEDGE_STAGGER_MS = 7_000;
-    // Abort a model that neither answers nor fails, so the hedge always settles
-    const MODEL_TIMEOUT_MS = 25_000;
-
     // ── Helper: call a single model, returns sanitized items ─────────
     async function callModel(
       candidate: ModelCandidate,
+      model: string,
       signal: AbortSignal,
     ): Promise<NuanceItem[]> {
-      const model = await resolveModel(candidate);
       const label = `${candidate.provider}:${model}`;
-      if (model !== candidate.models[0]) {
-        console.log(`Resolved model for ${candidate.provider}: ${model}`);
-      }
+      const toolOutput = candidate.toolOutput;
       const result = await clientFor(candidate).chat.completions.create(
         {
           model,
@@ -453,14 +444,94 @@ export async function POST(req: Request) {
               content:
                 "You are a helpful assistant that outputs strictly JSON.",
             },
-            { role: "user", content: prompt },
+            {
+              role: "user",
+              content: toolOutput
+                ? `${prompt}\nSubmit the entries with the submit_nuances tool.`
+                : prompt,
+            },
           ],
+          ...(toolOutput && {
+            tools: [OPENROUTER_NUANCE_TOOL],
+            tool_choice: {
+              type: "function" as const,
+              function: { name: "submit_nuances" },
+            },
+            reasoning_effort: toolOutput.reasoningEffort,
+            max_completion_tokens: toolOutput.maxCompletionTokens,
+          }),
         },
         { signal },
       );
-      const content = result.choices[0]?.message?.content;
+      const message = result.choices[0]?.message;
+      const toolCall = message?.tool_calls?.find(
+        (call) =>
+          call.type === "function" && call.function.name === "submit_nuances",
+      );
+      const content =
+        toolCall?.type === "function"
+          ? toolCall.function.arguments
+          : message?.content;
       if (!content) throw new Error(`${label}: empty content`);
-      return sanitizeItems(parseModelContent(content), AXIS_MAX_VAL);
+      return sanitizeItems(parseModelContent(content), axisMax);
+    }
+
+    async function callCandidate(
+      candidate: ModelCandidate,
+      signal: AbortSignal,
+    ): Promise<NuanceItem[]> {
+      const primaryModel = await resolveModel(candidate);
+      const primaryIndex = Math.max(candidate.models.indexOf(primaryModel), 0);
+      const models = candidate.sequentialModelFallback
+        ? candidate.models.slice(primaryIndex)
+        : [primaryModel];
+      const errors: string[] = [];
+      let bestEffort: NuanceItem[] = [];
+      let allRateLimited = true;
+      const requestTimeoutMs =
+        candidate.requestTimeoutMs ??
+        GENERATION_CONFIG.requests.defaultTimeoutMs;
+
+      if (primaryModel !== candidate.models[0]) {
+        console.log(
+          `Resolved model for ${candidate.provider}: ${primaryModel}`,
+        );
+      }
+
+      for (const model of models) {
+        const label = `${candidate.provider}:${model}`;
+        if (model !== primaryModel) {
+          console.log(`Trying sequential fallback: ${label}`);
+        }
+
+        try {
+          // The parent signal only cancels losing hedges. A fresh timeout for
+          // every model gives a sequential fallback its full request budget.
+          const attemptSignal = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(requestTimeoutMs),
+          ]);
+          const sanitized = await callModel(candidate, model, attemptSignal);
+          const issue = qualityIssue(sanitized);
+          if (!issue) return sanitized;
+          if (sanitized.length > bestEffort.length) bestEffort = sanitized;
+          errors.push(`${label}: low quality (${issue})`);
+          allRateLimited = false;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          const status = (error as { status?: unknown } | null)?.status;
+          const rateLimited = status === 429 || /^429\b/.test(message);
+          if (!rateLimited) allRateLimited = false;
+          errors.push(`${label}: ${message}`);
+        }
+      }
+
+      throw new CandidateAttemptsFailedError(
+        errors.join(" / "),
+        bestEffort,
+        allRateLimited,
+      );
     }
 
     // ── Hedged race: first *valid* result wins ────────────────────────
@@ -471,7 +542,6 @@ export async function POST(req: Request) {
     }> {
       return new Promise((resolve, reject) => {
         const controllers: AbortController[] = [];
-        const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
         // Single pending stagger timer — cleared on every start so an
         // immediate failover never leaves a stale timer that would launch
         // extra models later
@@ -491,7 +561,6 @@ export async function POST(req: Request) {
             clearTimeout(staggerTimer);
             staggerTimer = null;
           }
-          for (const t of timeoutTimers) clearTimeout(t);
         };
 
         const startNext = () => {
@@ -507,13 +576,6 @@ export async function POST(req: Request) {
           const controller = new AbortController();
           controllers.push(controller);
 
-          // Abort stalled calls so `failed` can always reach MODELS.length
-          const timeoutTimer = setTimeout(
-            () => controller.abort(),
-            MODEL_TIMEOUT_MS,
-          );
-          timeoutTimers.push(timeoutTimer);
-
           const onFailure = (message: string, rateLimited = false) => {
             console.warn(`Model failed: ${label}: ${message}`);
             failed++;
@@ -522,7 +584,10 @@ export async function POST(req: Request) {
             if (!rateLimited) allRateLimited = false;
             if (failed === candidates.length) {
               clearTimers();
-              if (bestEffort.length >= 3) {
+              if (
+                bestEffort.length >=
+                GENERATION_CONFIG.quality.minBestEffortItems
+              ) {
                 console.warn(
                   `All models below quality bar — returning best effort (${bestEffort.length} items)`,
                 );
@@ -541,18 +606,9 @@ export async function POST(req: Request) {
             }
           };
 
-          callModel(candidate, controller.signal)
+          callCandidate(candidate, controller.signal)
             .then((sanitized) => {
-              clearTimeout(timeoutTimer);
               if (settled) return;
-              const issue = qualityIssue(sanitized);
-              if (issue) {
-                if (sanitized.length > bestEffort.length) {
-                  bestEffort = sanitized;
-                }
-                onFailure(`low quality (${issue})`);
-                return;
-              }
               settled = true;
               console.log(`Winner: ${label} (${sanitized.length} items)`);
               clearTimers();
@@ -562,16 +618,25 @@ export async function POST(req: Request) {
               resolve({ items: sanitized, degraded: false });
             })
             .catch((err: unknown) => {
-              clearTimeout(timeoutTimer);
+              if (
+                err instanceof CandidateAttemptsFailedError &&
+                err.bestEffort.length > bestEffort.length
+              ) {
+                bestEffort = err.bestEffort;
+              }
               const message = err instanceof Error ? err.message : String(err);
-              // Prefer the SDK's structured status over parsing the message,
-              // which not every provider/SDK version prefixes with the code
-              const status = (err as { status?: unknown } | null)?.status;
-              onFailure(message, status === 429 || /^429\b/.test(message));
+              onFailure(
+                message,
+                err instanceof CandidateAttemptsFailedError &&
+                  err.allRateLimited,
+              );
             });
 
           if (started < candidates.length) {
-            staggerTimer = setTimeout(startNext, HEDGE_STAGGER_MS);
+            staggerTimer = setTimeout(
+              startNext,
+              GENERATION_CONFIG.requests.hedgeStaggerMs,
+            );
           }
         };
 
@@ -615,8 +680,17 @@ export async function POST(req: Request) {
         }
       }
       return NextResponse.json(
-        { error: "Upstream rate limited", details: message, retryAfter: 60 },
-        { status: 429, headers: { "Retry-After": "60" } },
+        {
+          error: "Upstream rate limited",
+          details: message,
+          retryAfter: GENERATION_CONFIG.upstreamRetryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(GENERATION_CONFIG.upstreamRetryAfterSeconds),
+          },
+        },
       );
     }
     return NextResponse.json(
