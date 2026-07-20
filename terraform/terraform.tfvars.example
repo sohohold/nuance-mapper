@@ -1,0 +1,25 @@
+# このファイルを terraform.tfvars にコピーして値を埋める:
+#   cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars は .gitignore 済み（秘密情報を含むためコミットしない）
+
+# 必須: SSH公開鍵（`cat ~/.ssh/id_ed25519.pub` の出力を貼り付ける）
+ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
+
+# 任意: ゾーンやスペックの変更
+# zone      = "is1b"   # is1a / is1b / tk1a / tk1b
+# core      = 2
+# memory    = 4        # GiB
+# disk_size = 20       # GiB
+
+# 任意: デプロイするブランチ
+# repo_branch = "main"
+
+# 任意: LLM プロバイダのAPIキー（未設定ならモックデータで動作）
+# gemini_api_key     = ""
+# groq_api_key       = ""
+# cerebras_api_key   = ""
+# openrouter_api_key = ""
+
+# 任意: Upstash Redis（永続キャッシュ）
+# upstash_redis_rest_url   = ""
+# upstash_redis_rest_token = ""

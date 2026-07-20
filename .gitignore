@@ -43,3 +43,11 @@ next-env.d.ts
 
 # cache
 /.cache
+
+# terraform (state と tfvars は秘密情報を含むためコミットしない)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
