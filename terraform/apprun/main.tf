@@ -5,12 +5,12 @@ resource "sakura_container_registry" "main" {
   subdomain_label = var.registry_subdomain_label
   description     = "nuance-mapper container images"
 
-  user {
+  user = [{
     name                = var.registry_username
     password_wo         = var.registry_password
     password_wo_version = var.registry_password_version
     permission          = "all"
-  }
+  }]
 }
 
 # ── AppRun（共用型） ──
