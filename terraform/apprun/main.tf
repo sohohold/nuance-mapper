@@ -16,8 +16,12 @@ resource "sakura_container_registry" "main" {
 # ── AppRun（共用型） ──
 # min_scale = 0 により、アクセスが無い間はインスタンスが起動せず課金されない。
 resource "sakura_apprun_shared" "main" {
-  name            = var.app_name
-  timeout_seconds = 60
+  name = var.app_name
+  # /api/generate はSSEレスポンスをハンドラ完了後にしか送り始めない。
+  # OpenRouterのみ設定時のワーストケース: ハシゴの4番目まで最大21秒(7秒×3段)待ち、
+  # sequentialModelFallbackで2モデルを各55秒タイムアウトで順に試すため最大131秒かかりうる。
+  # min_scale=0のコールドスタート分の余裕も見て180秒に設定する。
+  timeout_seconds = 180
   port            = 3000
   min_scale       = 0
   max_scale       = var.max_scale
