@@ -12,8 +12,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y git curl ca-certificates
 
-# Node.js 22 (NodeSource) と pnpm
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+# Node.js 24 (NodeSource) と pnpm — Vercel の Node.js バージョンに合わせる
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 npm install -g pnpm
 

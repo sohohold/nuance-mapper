@@ -10,7 +10,7 @@
 | `sakura_server` | 2コア / 4GiB の仮想サーバ（共有セグメント接続、グローバルIP 1つ） |
 | `sakura_disk` | Ubuntu 最新パブリックアーカイブから作った 20GiB SSD |
 | `sakura_packet_filter(_rules)` | SSH(22) と HTTP(80) だけ受け付けるファイアウォール |
-| `sakura_script` | 初回起動時に Node.js 22 導入 → `git clone` → `pnpm build` → systemd 常駐化まで自動実行 |
+| `sakura_script` | 初回起動時に Node.js 24 導入 → `git clone` → `pnpm build` → systemd 常駐化まで自動実行 |
 
 > **料金に注意**: `terraform apply` した時点から課金が始まります（このスペックで月数千円程度、時間割あり）。
 > 試し終わったら `terraform destroy` で全削除できます。
