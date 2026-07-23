@@ -14,12 +14,7 @@ ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
 # 任意: デプロイするブランチ
 # repo_branch = "main"
 
-# 任意: LLM プロバイダのAPIキー（未設定ならモックデータで動作）
-# gemini_api_key     = ""
-# groq_api_key       = ""
-# cerebras_api_key   = ""
-# openrouter_api_key = ""
-
-# 任意: Upstash Redis（永続キャッシュ）
-# upstash_redis_rest_url   = ""
-# upstash_redis_rest_token = ""
+# LLM プロバイダのAPIキーはここでは設定しない。
+# Terraform state に平文で残ってしまうため、デプロイ後にSSHして
+# /opt/nuance-mapper/.env.local を手動編集する(README参照)。
+# 未設定でもアプリはモックデータで動作する。

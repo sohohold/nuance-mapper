@@ -46,6 +46,11 @@ Terraform自身のstateを保存するバケットは、卵が先か鶏が先か
 | `GEMINI_API_KEY` 等 | LLMプロバイダのAPIキー | 任意(未設定ならモックデータ) |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | 永続キャッシュ | 任意 |
 
+> レジストリのパスワードは`password_wo`(write-only属性)経由で渡すためTerraform stateには残りません。
+> 一方、`GEMINI_API_KEY`等のAppRunの環境変数(`env`ブロック)にはwrite-only版が無く、
+> 現状の`sakura_apprun_shared`スキーマ上state内に平文で残ります。より高いレベルの秘匿性が
+> 必要な場合は、シークレットマネージャー経由での注入などを検討してください。
+
 ## デプロイ方法
 
 GitHub の **Actions タブ → "Deploy to Sakura AppRun" → Run workflow** を押すだけです。

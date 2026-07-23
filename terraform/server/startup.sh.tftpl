@@ -23,17 +23,13 @@ useradd --system --create-home --shell /usr/sbin/nologin app || true
 # アプリ取得
 git clone --branch "${repo_branch}" "${repo_url}" /opt/nuance-mapper
 
-# 環境変数（LLM APIキーなど）。空のままでもアプリはモックデータで動作する。
-cat > /opt/nuance-mapper/.env.local <<'ENVEOF'
-GEMINI_API_KEY=${gemini_api_key}
-GROQ_API_KEY=${groq_api_key}
-CEREBRAS_API_KEY=${cerebras_api_key}
-OPENROUTER_API_KEY=${openrouter_api_key}
-UPSTASH_REDIS_REST_URL=${upstash_redis_rest_url}
-UPSTASH_REDIS_REST_TOKEN=${upstash_redis_rest_token}
-ENVEOF
-chmod 600 /opt/nuance-mapper/.env.local
+# LLM プロバイダのAPIキーはこのスクリプトに書き込まない
+# (sakura_script の内容および Terraform state に平文で残ってしまうため)。
+# 空のままでもアプリはモックデータで動作する。使う場合はデプロイ後にSSHして
+# 手動で設定する: sudo -u app vi /opt/nuance-mapper/.env.local && sudo systemctl restart nuance-mapper
+touch /opt/nuance-mapper/.env.local
 chown -R app:app /opt/nuance-mapper
+chmod 600 /opt/nuance-mapper/.env.local
 
 # 依存インストールとプロダクションビルド
 cd /opt/nuance-mapper

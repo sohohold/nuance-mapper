@@ -42,7 +42,11 @@ cp terraform.tfvars.example terraform.tfvars
 
 `terraform.tfvars` を開いて、最低限 `ssh_public_key` に自分の公開鍵
 （`cat ~/.ssh/id_ed25519.pub` の出力）を貼り付けます。
-LLM の API キーを持っていれば同じファイルに設定できます（未設定でもモックデータで動きます）。
+
+LLM の API キーはこのファイルには設定しません。`sakura_script` の内容も
+Terraform state もどちらも平文で保存されるため、APIキーを混ぜたくないからです。
+使いたい場合はデプロイ後にSSHして手動で設定します（手順4参照）。未設定でも
+アプリはモックデータで動作します。
 
 ## 3. デプロイする（Terraform の基本 3 コマンド）
 
@@ -74,6 +78,18 @@ sudo tail -f /var/log/nuance-mapper-setup.log
 # アプリの状態とログ
 systemctl status nuance-mapper
 sudo journalctl -u nuance-mapper -f
+```
+
+### LLM プロバイダのAPIキーを設定する(任意)
+
+未設定でもモックデータで動作しますが、実際のLLMを使いたい場合はデプロイ後に
+SSHして手動で設定します(Terraform経由にしないのは、state に平文で残るのを
+避けるためです):
+
+```bash
+sudo -u app vi /opt/nuance-mapper/.env.local
+# GEMINI_API_KEY=... のように1行ずつ追記
+sudo systemctl restart nuance-mapper
 ```
 
 ## 5. 変更の反映と後片付け

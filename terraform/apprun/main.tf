@@ -6,9 +6,10 @@ resource "sakura_container_registry" "main" {
   description     = "nuance-mapper container images"
 
   user {
-    name       = var.registry_username
-    password   = var.registry_password
-    permission = "all"
+    name                = var.registry_username
+    password_wo         = var.registry_password
+    password_wo_version = 1
+    permission          = "all"
   }
 }
 

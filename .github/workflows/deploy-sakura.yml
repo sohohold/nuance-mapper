@@ -104,6 +104,9 @@ jobs:
 
       - name: Show app URL
         working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
         run: |
           echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "$(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"

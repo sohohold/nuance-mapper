@@ -82,19 +82,15 @@ resource "sakura_disk" "main" {
 }
 
 # ── スタートアップスクリプト ──
-# 初回起動時に Node.js のインストール → git clone → ビルド → systemd 常駐化まで行う
+# 初回起動時に Node.js のインストール → git clone → ビルド → systemd 常駐化まで行う。
+# LLM APIキー等の秘密情報はここに含めない(sakura_scriptの内容はTerraform stateに
+# 平文で残るため)。使う場合はデプロイ後にSSHして手動で.env.localへ設定する。
 resource "sakura_script" "startup" {
   name  = "${var.server_name}-startup"
   class = "shell"
   content = templatefile("${path.module}/startup.sh.tftpl", {
-    repo_url                 = var.repo_url
-    repo_branch              = var.repo_branch
-    gemini_api_key           = var.gemini_api_key
-    groq_api_key             = var.groq_api_key
-    cerebras_api_key         = var.cerebras_api_key
-    openrouter_api_key       = var.openrouter_api_key
-    upstash_redis_rest_url   = var.upstash_redis_rest_url
-    upstash_redis_rest_token = var.upstash_redis_rest_token
+    repo_url    = var.repo_url
+    repo_branch = var.repo_branch
   })
 }
 
@@ -117,8 +113,8 @@ resource "sakura_server" "main" {
     ssh_keys        = [var.ssh_public_key]
     disable_pw_auth = true # パスワードログイン禁止（SSH鍵のみ）
 
-    script = {
+    script = [{
       id = sakura_script.startup.id
-    }
+    }]
   }
 }
