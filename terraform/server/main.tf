@@ -96,6 +96,11 @@ resource "sakura_script" "startup" {
 
 # ── サーバ本体 ──
 resource "sakura_server" "main" {
+  # sakura_server は packet_filter_id しか参照せず、ルール未設定時のパケットフィルタは
+  # 全許可がデフォルトのため、sakura_packet_filter_rules.main への暗黙の依存が無いと
+  # ルール適用前にサーバが作られ、一時的に全ポート開放状態で公開されうる。明示的に依存させる。
+  depends_on = [sakura_packet_filter_rules.main]
+
   name   = var.server_name
   zone   = var.zone
   core   = var.core
