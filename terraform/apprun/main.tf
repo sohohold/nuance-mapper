@@ -8,7 +8,7 @@ resource "sakura_container_registry" "main" {
   user {
     name                = var.registry_username
     password_wo         = var.registry_password
-    password_wo_version = 1
+    password_wo_version = var.registry_password_version
     permission          = "all"
   }
 }
@@ -33,7 +33,7 @@ resource "sakura_apprun_shared" "main" {
         server              = sakura_container_registry.main.fqdn
         username            = var.registry_username
         password_wo         = var.registry_password
-        password_wo_version = 1
+        password_wo_version = var.registry_password_version
       }
     }
 

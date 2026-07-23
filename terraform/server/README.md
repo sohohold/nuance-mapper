@@ -115,5 +115,5 @@ terraform destroy   # 内容を確認して yes
 
 - **`Error: 401` / 認証エラー** — 手順 1 の環境変数が現在のターミナルに設定されているか `echo $SAKURA_ACCESS_TOKEN` で確認。
 - **`terraform.tfstate` は消さない・コミットしない** — Terraform が「今何が作られているか」を記録する台帳です。消すと Terraform がリソースを管理できなくなります（`.gitignore` 済み）。
-- **プライベートリポジトリの場合** — サーバ上の `git clone` が失敗します。`repo_url` にトークン付き URL（`https://<token>@github.com/...`）を設定するか、リポジトリを公開してください。
+- **プライベートリポジトリの場合** — サーバ上の自動 `git clone` が失敗します。`repo_url` にトークン付き URL を設定しないでください(sakura_scriptの内容とTerraform stateに平文で残ります)。代わりにデプロイ後にSSHして、自分の認証情報(自分で追加したデプロイ鍵や `gh auth login` など)で手動 clone してから手順3の依存インストール以降を自分で実行するか、リポジトリを公開してください。
 - **HTTPS 化したい** — この構成は HTTP のみです。独自ドメイン + HTTPS が必要なら、systemd ユニットの待ち受けを 3000 番に変えた上で、サーバに [Caddy](https://caddyserver.com/) を入れて 80/443 → 3000 のリバースプロキシにするのが手軽です（パケットフィルタの 443 開放も忘れずに）。

@@ -57,6 +57,12 @@ GitHub の **Actions タブ → "Deploy to Sakura AppRun" → Run workflow** を
 初回実行時にコンテナレジストリとAppRunアプリの両方が作成され、以降は新しいイメージへの
 更新（新リビジョン）になります。完了すると Job Summary にアプリURLが表示されます。
 
+**レジストリのパスワードをローテーションする場合**: `SAKURA_REGISTRY_PASSWORD` を
+変更するだけでは反映されません(`password_wo`はwrite-only属性のため、Terraformは
+値そのものではなく`password_wo_version`の変化で更新を検知します)。
+`terraform/apprun/variables.tf`の`registry_password_version`のデフォルト値を
+増やしてコミットするか、CIで`-var="registry_password_version=2"`のように渡してください。
+
 ## ローカルから使う場合
 
 CIと同じ手順をローカルでも実行できます:

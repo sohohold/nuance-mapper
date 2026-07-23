@@ -29,6 +29,12 @@ variable "registry_password" {
   sensitive   = true
 }
 
+variable "registry_password_version" {
+  description = "registry_password を変更(ローテーション)するたびに増やすバージョン番号。write-only属性は値そのものではなくこの番号の変化で更新を検知するため、パスワードを変えたらここも必ず増やすこと"
+  type        = number
+  default     = 1
+}
+
 # ── AppRun ──
 
 variable "image_tag" {

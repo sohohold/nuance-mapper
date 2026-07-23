@@ -8,6 +8,11 @@ registry_subdomain_label = "your-unique-label"
 # 必須: レジストリのパスワード（自分で決める。docker login に使う）
 registry_password = "choose-a-strong-password"
 
+# パスワードをローテーションするときは、値を変えるだけでなく
+# registry_password_version も必ず増やすこと(write-only属性は値ではなく
+# このバージョン番号の変化で更新を検知するため)
+# registry_password_version = 1
+
 # 任意
 # registry_username = "ci"
 # zone              = "is1b"

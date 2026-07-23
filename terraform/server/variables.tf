@@ -34,7 +34,13 @@ variable "ssh_public_key" {
 }
 
 variable "repo_url" {
-  description = "デプロイするリポジトリの URL（プライベートの場合はトークン付き URL が必要）"
+  description = <<-EOT
+    デプロイするリポジトリの公開URL。
+    トークンや認証情報を埋め込んだURLはここに入れないこと
+    (sakura_scriptの内容とTerraform stateに平文で残る)。
+    プライベートリポジトリの場合は、デプロイ後にSSHして手動でcloneする
+    (terraform/server/README.md 参照)。
+  EOT
   type        = string
   default     = "https://github.com/sohohold/nuance-mapper.git"
 }
