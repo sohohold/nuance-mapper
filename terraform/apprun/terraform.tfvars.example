@@ -1,0 +1,27 @@
+# このファイルを terraform.tfvars にコピーして値を埋める:
+#   cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars は .gitignore 済み（秘密情報を含むためコミットしない）
+
+# 必須: コンテナレジストリのFQDNサブドメイン（さくら全体で一意。例: myname-nuance-mapper）
+registry_subdomain_label = "your-unique-label"
+
+# 必須: レジストリのパスワード（自分で決める。docker login に使う）
+registry_password = "choose-a-strong-password"
+
+# 任意
+# registry_username = "ci"
+# zone              = "is1b"
+# max_cpu           = "0.5"
+# max_memory        = "512Mi"
+# max_scale         = 2
+# image_tag         = "latest"
+
+# 任意: LLM プロバイダのAPIキー（未設定ならモックデータで動作）
+# gemini_api_key     = ""
+# groq_api_key       = ""
+# cerebras_api_key   = ""
+# openrouter_api_key = ""
+
+# 任意: Upstash Redis（永続キャッシュ）
+# upstash_redis_rest_url   = ""
+# upstash_redis_rest_token = ""

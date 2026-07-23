@@ -1,0 +1,65 @@
+name: Destroy Sakura AppRun
+
+# 手動起動のみ。誤爆防止のため confirm 入力に "destroy" と打たないと実行されない
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '本当に削除する場合は "destroy" と入力'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TF_WORKING_DIR: terraform/apprun
+  TF_VERSION: "1.11.4"
+
+jobs:
+  destroy:
+    if: inputs.confirm == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Write backend config
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          cat > backend.hcl <<EOF
+          bucket = "${{ secrets.SAKURA_TFSTATE_BUCKET }}"
+          key    = "nuance-mapper/apprun/terraform.tfstate"
+          region = "jp-north-1"
+          endpoints = {
+            s3 = "https://s3.isk01.sakurastorage.jp"
+          }
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_path_style               = true
+          EOF
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform destroy
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+        run: terraform destroy -auto-approve

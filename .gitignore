@@ -51,3 +51,5 @@ next-env.d.ts
 *.tfvars
 !*.tfvars.example
 crash.log
+backend.hcl
+!backend.hcl.example
