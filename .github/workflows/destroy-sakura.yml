@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# deploy-sakura.yml と同じ state を直列化する(グループ名を揃える)
+concurrency:
+  group: sakura-apprun-terraform
+  cancel-in-progress: false
+
 env:
   TF_WORKING_DIR: terraform/apprun
   TF_VERSION: "1.11.4"

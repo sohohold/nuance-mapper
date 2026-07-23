@@ -13,6 +13,13 @@ on:
 permissions:
   contents: read
 
+# deploy/destroy が同じ Terraform state(terraform/apprun)を同時に触らないよう直列化する。
+# S3互換バックエンドのネイティブロック(use_lockfile)はさくらのオブジェクトストレージでの
+# 対応が未確認のため、GitHub Actions側のconcurrencyで確実に守る。
+concurrency:
+  group: sakura-apprun-terraform
+  cancel-in-progress: false
+
 env:
   TF_WORKING_DIR: terraform/apprun
   TF_VERSION: "1.11.4"
