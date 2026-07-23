@@ -12,7 +12,7 @@ registry_password = "choose-a-strong-password"
 # registry_username = "ci"
 # zone              = "is1b"
 # max_cpu           = "0.5"
-# max_memory        = "512Mi"
+# max_memory        = "1Gi"
 # max_scale         = 2
 # image_tag         = "latest"
 

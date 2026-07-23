@@ -79,7 +79,16 @@ sudo journalctl -u nuance-mapper -f
 ## 5. 変更の反映と後片付け
 
 - **スペック変更**: `terraform.tfvars` の `core` / `memory` などを変えて再度 `terraform apply`
-- **アプリの更新**: サーバに SSH して `cd /opt/nuance-mapper && sudo -u app -H git pull && sudo -u app -H pnpm install && sudo -u app -H pnpm build && sudo systemctl restart nuance-mapper`
+- **アプリの更新**: サーバに SSH して以下を実行(`pnpm build` は `.next/standalone` を作り直すので、毎回 `public`/`.next/static` の再コピーが必要):
+  ```bash
+  cd /opt/nuance-mapper
+  sudo -u app -H git pull
+  sudo -u app -H pnpm install --frozen-lockfile
+  sudo -u app -H pnpm build
+  sudo -u app -H cp -r public .next/standalone/public
+  sudo -u app -H cp -r .next/static .next/standalone/.next/static
+  sudo systemctl restart nuance-mapper
+  ```
 - **全削除（課金停止）**:
 
 ```bash

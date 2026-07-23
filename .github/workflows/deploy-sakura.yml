@@ -27,18 +27,6 @@ jobs:
         id: vars
         run: echo "tag=${{ inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to Sakura Container Registry
-        run: |
-          echo "${{ secrets.SAKURA_REGISTRY_PASSWORD }}" | docker login \
-            "${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp" \
-            -u "${{ secrets.SAKURA_REGISTRY_USERNAME }}" --password-stdin
-
-      - name: Build and push image
-        run: |
-          IMAGE="${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp/nuance-mapper:${{ steps.vars.outputs.tag }}"
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
@@ -67,6 +55,33 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
         run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform apply (registry only)
+        # 初回実行時、コンテナレジストリはまだ存在しないため docker push より先に作る。
+        # 2回目以降はすでに存在するので実質no-op。
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+        run: |
+          terraform apply -auto-approve -target=sakura_container_registry.main
+
+      - name: Log in to Sakura Container Registry
+        run: |
+          echo "${{ secrets.SAKURA_REGISTRY_PASSWORD }}" | docker login \
+            "${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp" \
+            -u "${{ secrets.SAKURA_REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Build and push image
+        run: |
+          IMAGE="${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp/nuance-mapper:${{ steps.vars.outputs.tag }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
 
       - name: Terraform apply
         working-directory: ${{ env.TF_WORKING_DIR }}

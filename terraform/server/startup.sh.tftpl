@@ -40,6 +40,12 @@ cd /opt/nuance-mapper
 sudo -u app -H pnpm install --frozen-lockfile
 sudo -u app -H pnpm build
 
+# next.config.ts の output: "standalone" により `.next/standalone/server.js` が生成される。
+# standalone 出力には public/ と .next/static が含まれないため、手動でコピーする。
+# (`next start` は standalone ビルドでは動作しないため使わない)
+sudo -u app -H cp -r public .next/standalone/public
+sudo -u app -H cp -r .next/static .next/standalone/.next/static
+
 # systemd で常駐化（ポート80で待ち受け。非rootでも80を使えるよう capability を付与）
 cat > /etc/systemd/system/nuance-mapper.service <<'UNITEOF'
 [Unit]
@@ -50,8 +56,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=app
-WorkingDirectory=/opt/nuance-mapper
-ExecStart=/usr/bin/pnpm start -- -p 80 -H 0.0.0.0
+WorkingDirectory=/opt/nuance-mapper/.next/standalone
+Environment=PORT=80
+Environment=HOSTNAME=0.0.0.0
+EnvironmentFile=/opt/nuance-mapper/.env.local
+ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
 AmbientCapabilities=CAP_NET_BIND_SERVICE

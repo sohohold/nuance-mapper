@@ -38,15 +38,15 @@ variable "image_tag" {
 }
 
 variable "max_cpu" {
-  description = "1インスタンスあたりの最大CPU (0.1 / 0.5 / 1 / 2)"
+  description = "1インスタンスあたりの最大CPU (0.5 / 1 / 2 のいずれか)"
   type        = string
   default     = "0.5"
 }
 
 variable "max_memory" {
-  description = "1インスタンスあたりの最大メモリ (256Mi / 512Mi / 1Gi / 2Gi / 4Gi)"
+  description = "1インスタンスあたりの最大メモリ (1Gi / 2Gi / 4Gi のいずれか)"
   type        = string
-  default     = "512Mi"
+  default     = "1Gi"
 }
 
 variable "max_scale" {
