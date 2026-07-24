@@ -1,0 +1,131 @@
+name: Deploy to Sakura AppRun
+
+# 手動起動のみ。main への merge では自動デプロイしない
+# (実運用は Vercel、Sakura 側は費用を抑えるため使いたい時だけ起動する)
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "コンテナイメージのタグ（空の場合はコミットSHAを使用）"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# deploy/destroy が同じ Terraform state(terraform/apprun)を同時に触らないよう直列化する。
+# S3互換バックエンドのネイティブロック(use_lockfile)はさくらのオブジェクトストレージでの
+# 対応が未確認のため、GitHub Actions側のconcurrencyで確実に守る。
+concurrency:
+  group: sakura-apprun-terraform
+  cancel-in-progress: false
+
+env:
+  TF_WORKING_DIR: terraform/apprun
+  TF_VERSION: "1.11.4"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: vars
+        # inputs.image_tag はユーザー入力なので、${{ }} でスクリプトに直接展開せず
+        # env経由でシェル変数として渡す(シェルインジェクション対策)
+        env:
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: echo "tag=${IMAGE_TAG_INPUT:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Write backend config
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          cat > backend.hcl <<EOF
+          bucket = "${{ secrets.SAKURA_TFSTATE_BUCKET }}"
+          key    = "nuance-mapper/apprun/terraform.tfstate"
+          region = "jp-north-1"
+          endpoints = {
+            s3 = "https://s3.isk01.sakurastorage.jp"
+          }
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_path_style               = true
+          EOF
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform apply (registry only)
+        # 初回実行時、コンテナレジストリはまだ存在しないため docker push より先に作る。
+        # 2回目以降はすでに存在するので実質no-op。
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+        run: |
+          terraform apply -auto-approve -target=sakura_container_registry.main
+
+      - name: Log in to Sakura Container Registry
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          REGISTRY_USERNAME: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login \
+            "${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp" \
+            -u "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build and push image
+        env:
+          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          IMAGE="${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp/nuance-mapper:${IMAGE_TAG}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Terraform apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_cerebras_api_key: ${{ secrets.CEREBRAS_API_KEY }}
+          TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          TF_VAR_upstash_redis_rest_url: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          TF_VAR_upstash_redis_rest_token: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          terraform apply -auto-approve -var="image_tag=${IMAGE_TAG}"
+
+      - name: Show app URL
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+        run: |
+          echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"

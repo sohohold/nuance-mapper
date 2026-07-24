@@ -1,0 +1,65 @@
+# ── コンテナレジストリ ──
+# `docker push` の宛先。fqdn = "<registry_subdomain_label>.sakuracr.jp"
+resource "sakura_container_registry" "main" {
+  name            = "${var.app_name}-registry"
+  subdomain_label = var.registry_subdomain_label
+  description     = "nuance-mapper container images"
+
+  user = [{
+    name                = var.registry_username
+    password_wo         = var.registry_password
+    password_wo_version = var.registry_password_version
+    permission          = "all"
+  }]
+}
+
+# ── AppRun（共用型） ──
+# min_scale = 0 により、アクセスが無い間はインスタンスが起動せず課金されない。
+resource "sakura_apprun_shared" "main" {
+  name = var.app_name
+  # /api/generate はSSEレスポンスをハンドラ完了後にしか送り始めない。
+  # OpenRouterのみ設定時のワーストケース: ハシゴの4番目まで最大21秒(7秒×3段)待ち、
+  # sequentialModelFallbackで2モデルを各55秒タイムアウトで順に試すため最大131秒かかりうる。
+  # min_scale=0のコールドスタート分の余裕も見て180秒に設定する。
+  timeout_seconds = 180
+  port            = 3000
+  min_scale       = 0
+  max_scale       = var.max_scale
+
+  components = [{
+    name       = var.app_name
+    max_cpu    = var.max_cpu
+    max_memory = var.max_memory
+
+    deploy_source = {
+      container_registry = {
+        image               = "${sakura_container_registry.main.fqdn}/${var.app_name}:${var.image_tag}"
+        server              = sakura_container_registry.main.fqdn
+        username            = var.registry_username
+        password_wo         = var.registry_password
+        password_wo_version = var.registry_password_version
+      }
+    }
+
+    env = [
+      { key = "GEMINI_API_KEY", value = var.gemini_api_key },
+      { key = "GROQ_API_KEY", value = var.groq_api_key },
+      { key = "CEREBRAS_API_KEY", value = var.cerebras_api_key },
+      { key = "OPENROUTER_API_KEY", value = var.openrouter_api_key },
+      { key = "UPSTASH_REDIS_REST_URL", value = var.upstash_redis_rest_url },
+      { key = "UPSTASH_REDIS_REST_TOKEN", value = var.upstash_redis_rest_token },
+    ]
+
+    probe = {
+      http_get = {
+        path = "/"
+        port = 3000
+      }
+    }
+  }]
+
+  traffics = [{
+    version_index = 0
+    percent       = 100
+  }]
+}
