@@ -32,7 +32,11 @@ jobs:
 
       - name: Determine image tag
         id: vars
-        run: echo "tag=${{ inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
+        # inputs.image_tag はユーザー入力なので、${{ }} でスクリプトに直接展開せず
+        # env経由でシェル変数として渡す(シェルインジェクション対策)
+        env:
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: echo "tag=${IMAGE_TAG_INPUT:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -79,14 +83,21 @@ jobs:
           terraform apply -auto-approve -target=sakura_container_registry.main
 
       - name: Log in to Sakura Container Registry
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          REGISTRY_USERNAME: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
         run: |
-          echo "${{ secrets.SAKURA_REGISTRY_PASSWORD }}" | docker login \
-            "${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp" \
-            -u "${{ secrets.SAKURA_REGISTRY_USERNAME }}" --password-stdin
+          echo "$REGISTRY_PASSWORD" | docker login \
+            "${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp" \
+            -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push image
+        env:
+          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
-          IMAGE="${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}.sakuracr.jp/nuance-mapper:${{ steps.vars.outputs.tag }}"
+          IMAGE="${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp/nuance-mapper:${IMAGE_TAG}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
@@ -106,8 +117,9 @@ jobs:
           TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
           TF_VAR_upstash_redis_rest_url: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           TF_VAR_upstash_redis_rest_token: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
-          terraform apply -auto-approve -var="image_tag=${{ steps.vars.outputs.tag }}"
+          terraform apply -auto-approve -var="image_tag=${IMAGE_TAG}"
 
       - name: Show app URL
         working-directory: ${{ env.TF_WORKING_DIR }}
