@@ -8,8 +8,10 @@ RUN corepack enable
 # ── 依存関係のインストール ──
 FROM base AS deps
 WORKDIR /app
-# postinstall (scripts/ts7-compat.cjs) が参照するので package.json/lockfile と一緒にコピーする
-COPY package.json pnpm-lock.yaml ./
+# postinstall (scripts/ts7-compat.cjs) が参照するので package.json/lockfile と一緒にコピーする。
+# pnpm-workspace.yaml には overrides と allowBuilds があり、これが無いと
+# --frozen-lockfile が lockfile との不一致で落ちる。
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY scripts ./scripts
 RUN pnpm install --frozen-lockfile
 
