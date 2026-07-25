@@ -1,3 +1,22 @@
+locals {
+  # GitHub Secretsに未登録のキーは空文字で渡ってくる。空値の環境変数をAppRun APIに
+  # 送るとバリデーションで弾かれうるため、値があるものだけを送る。
+  # アプリ側も buildCandidates() が `if (apiKey)` で判定しており、
+  # 「空文字で存在する」と「キーが無い」は同じ扱いなので挙動は変わらない。
+  app_env_all = {
+    GEMINI_API_KEY           = var.gemini_api_key
+    GROQ_API_KEY             = var.groq_api_key
+    CEREBRAS_API_KEY         = var.cerebras_api_key
+    OPENROUTER_API_KEY       = var.openrouter_api_key
+    UPSTASH_REDIS_REST_URL   = var.upstash_redis_rest_url
+    UPSTASH_REDIS_REST_TOKEN = var.upstash_redis_rest_token
+  }
+
+  app_env = [
+    for k, v in local.app_env_all : { key = k, value = v } if v != ""
+  ]
+}
+
 # ── コンテナレジストリ ──
 # `docker push` の宛先。fqdn = "<registry_subdomain_label>.sakuracr.jp"
 resource "sakura_container_registry" "main" {
@@ -41,14 +60,7 @@ resource "sakura_apprun_shared" "main" {
       }
     }
 
-    env = [
-      { key = "GEMINI_API_KEY", value = var.gemini_api_key },
-      { key = "GROQ_API_KEY", value = var.groq_api_key },
-      { key = "CEREBRAS_API_KEY", value = var.cerebras_api_key },
-      { key = "OPENROUTER_API_KEY", value = var.openrouter_api_key },
-      { key = "UPSTASH_REDIS_REST_URL", value = var.upstash_redis_rest_url },
-      { key = "UPSTASH_REDIS_REST_TOKEN", value = var.upstash_redis_rest_token },
-    ]
+    env = local.app_env
 
     probe = {
       http_get = {
