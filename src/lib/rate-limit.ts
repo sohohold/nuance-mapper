@@ -26,9 +26,9 @@ cleanupTimer.unref?.();
 export function rateLimit(
   key: string,
   {
-    limit = RATE_LIMIT_CONFIG.maxRequests,
-    windowMs = RATE_LIMIT_CONFIG.windowMs,
-  } = {},
+    limit = RATE_LIMIT_CONFIG.maxRequests as number,
+    windowMs = RATE_LIMIT_CONFIG.windowMs as number,
+  }: { limit?: number; windowMs?: number } = {},
 ): { success: boolean; retryAfter?: number } {
   const now = Date.now();
   const entry = store.get(key);

@@ -95,10 +95,15 @@ export const GENERATION_CONFIG = {
     defaultTimeoutMs: 25 * SECOND_MS,
     sdkMaxRetries: 0,
   },
-  /** Limits applied before user input is interpolated into the prompt. */
+  /**
+   * Limits applied before user input is interpolated into the prompt.
+   * Both fields are deliberately the same number: the client and the API
+   * enforce one shared rule, so a value that types fine can never be
+   * rejected by the server.
+   */
   input: {
-    maxWordLength: 64,
-    maxAxisLabelLength: 80,
+    maxWordLength: 24,
+    maxAxisLabelLength: 24,
   },
   /** Prompt targets that define the generated map's density and range. */
   prompt: {
