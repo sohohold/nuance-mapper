@@ -6,12 +6,17 @@ export const en: Dictionary = {
 
   // Input
   inputPlaceholder: "Enter a word (e.g. awesome)",
-  slowWarning: "May take 10+ seconds",
+  slowWarning: "This can take 10 seconds or more",
   customizeAxis: "Customize axes",
   closeAxisSettings: "Close axis settings",
   presetLabel: "Choose a preset",
   xAxisLabel: "X-axis label (horizontal)",
   yAxisLabel: "Y-axis label (vertical)",
+
+  // Input validation
+  charLimitExceeded: "Too many characters ({count}/{max})",
+  charCounter: "{count}/{max}",
+  axisLabelRequired: "Enter an axis label",
 
   // Presets
   presetCreative: "Creative",

@@ -131,6 +131,14 @@ export const GENERATION_CONFIG = {
   mockCoordinateOffset: 5,
 } as const;
 
+/** Input-field behaviour that only the browser cares about. */
+export const INPUT_UI_CONFIG = {
+  /** Show the character counter once the value reaches this length. */
+  counterThresholdChars: 20,
+  /** How long a request may run before the user is told it is slow. */
+  slowWarningDelayMs: 5 * SECOND_MS,
+} as const;
+
 export const CACHE_CONFIG = {
   /** Maximum entries retained by the per-process memory fallback. */
   maxEntries: 200,

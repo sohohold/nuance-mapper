@@ -4,12 +4,17 @@ export const ja = {
 
   // Input
   inputPlaceholder: "言葉を入力してください (例: すごい)",
-  slowWarning: "10秒以上かかる場合があります",
+  slowWarning: "10秒以上かかることがあります",
   customizeAxis: "軸をカスタマイズ",
   closeAxisSettings: "軸設定を閉じる",
   presetLabel: "プリセットから選択",
   xAxisLabel: "X軸ラベル (横軸)",
   yAxisLabel: "Y軸ラベル (縦軸)",
+
+  // Input validation
+  charLimitExceeded: "文字数が上限を超えています（{count}/{max}）",
+  charCounter: "{count}/{max}",
+  axisLabelRequired: "軸ラベルを入力してください",
 
   // Presets
   presetCreative: "創作",

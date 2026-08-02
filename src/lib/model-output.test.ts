@@ -97,22 +97,35 @@ describe("parseModelContent", () => {
     expect(parseModelContent(content)).toHaveLength(1);
   });
 
-  // Characterizing current behavior, not endorsing it: jsonrepair rewrites
-  // "prose + array + prose" into a 3-element array, so the indexOf("[")
-  // fallback below never runs for that shape. Nothing usable survives
-  // sanitizeItems, so the request degrades to a failover rather than
-  // showing junk — but the recovery this code was written for does not
-  // actually happen. See docs/test-spec.md F-01.
-  it("wraps prose around an array instead of extracting it", () => {
+  it("extracts an array wrapped in prose", () => {
     const content = 'はい、結果です:\n[{"word":"a","x":0,"y":0}]\n以上です。';
-    const parsed = parseModelContent(content);
-    expect(parsed).toHaveLength(3);
-    expect(sanitizeItems(parsed, AXIS_MAX)).toEqual([]);
+    expect(parseModelContent(content)).toEqual([{ word: "a", x: 0, y: 0 }]);
   });
 
-  it("recovers an array when jsonrepair cannot fix the whole reply", () => {
-    const content = '{"a": [{"word":"a","x":0,"y":0}]';
-    expect(parseModelContent(content)).toHaveLength(1);
+  it("extracts an array from a greeting-prefixed reply", () => {
+    expect(parseModelContent('Sure! [{"word":"a","x":1,"y":2}]')).toHaveLength(
+      1,
+    );
+  });
+
+  it("recovers an array from an unterminated object wrapper", () => {
+    expect(parseModelContent('{"a": [{"word":"a","x":0,"y":0}]')).toHaveLength(
+      1,
+    );
+  });
+
+  it("repairs a truncated array", () => {
+    expect(
+      parseModelContent('[{"word":"a","x":0,"y":0},{"word":"b","x":1,"y":1'),
+    ).toHaveLength(2);
+  });
+
+  it("prefers the strict parse of the whole reply", () => {
+    // A valid object wrapper must not be reduced to its inner array when
+    // the wrapper itself parses — normalizeItems decides which key wins.
+    expect(
+      parseModelContent('{"results":[{"word":"a","x":0,"y":0}]}'),
+    ).toHaveLength(1);
   });
 
   it("parses a fenced array", () => {

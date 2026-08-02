@@ -119,7 +119,10 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
       <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
         {firstItem.word}
         {items.length > 1 && (
-          <span className="ml-1 opacity-70 border-l border-white/30 pl-1">
+          <span
+            data-testid="group-count"
+            className="ml-1 opacity-70 border-l border-white/30 pl-1"
+          >
             +{items.length - 1}
           </span>
         )}
@@ -515,6 +518,8 @@ function NuanceMapContent({
             }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             ref={tooltipRef}
+            data-testid="word-tooltip"
+            data-below={hoverInfo.below}
             className="absolute bg-white/95 backdrop-blur-xl p-4 rounded-2xl shadow-2xl border border-white/40 min-w-50 max-w-[min(280px,80vw)] z-100 pointer-events-auto"
             style={{
               left: hoverInfo.x + shift.dx,

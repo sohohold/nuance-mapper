@@ -48,19 +48,47 @@ export function parseJson(value: string): unknown {
   }
 }
 
-/** Parse model content, tolerating <think> blocks and stray prose. */
+/** The outermost `[ ... ]` span, or null when there isn't one. */
+function outermostArray(value: string): string | null {
+  const start = value.indexOf("[");
+  const end = value.lastIndexOf("]");
+  if (start === -1 || end <= start) return null;
+  return value.slice(start, end + 1);
+}
+
+/**
+ * Parse model content, tolerating <think> blocks, code fences and stray
+ * prose around the array.
+ *
+ * Strategy order matters. jsonrepair is lenient enough to rewrite
+ * "prose + array + prose" into a three-element array of its own, so it
+ * must run *after* the array has been isolated — otherwise a chatty reply
+ * silently turns into junk entries instead of the array it contains.
+ */
 export function parseModelContent(content: string): NuanceItem[] {
   const s = stripCodeFences(
     content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
   );
-  try {
-    return normalizeItems(parseJson(s));
-  } catch {
-    const start = s.indexOf("[");
-    const end = s.lastIndexOf("]");
-    if (start === -1 || end <= start) throw new Error("No JSON array found");
-    return normalizeItems(parseJson(s.slice(start, end + 1)));
+  const sliced = outermostArray(s);
+  const attempts: (() => unknown)[] = [
+    // Strict, whole reply — the overwhelmingly common case
+    () => JSON.parse(s),
+    // Strict, array only — drops greetings and trailing remarks
+    ...(sliced ? [() => JSON.parse(sliced)] : []),
+    // Repaired array only — truncated or lenient JSON inside prose
+    ...(sliced ? [() => JSON.parse(jsonrepair(sliced))] : []),
+    // Repaired whole reply — last resort, e.g. an unterminated array
+    () => JSON.parse(jsonrepair(s)),
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      return normalizeItems(attempt());
+    } catch {
+      // Try the next strategy
+    }
   }
+  throw new Error("Could not parse response as items array");
 }
 
 /** Drop malformed entries, dedupe by word, clamp coordinates. */
