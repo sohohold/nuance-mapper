@@ -95,6 +95,35 @@ function chatReply(content: string | NuanceItem[]) {
   };
 }
 
+/** OpenRouter-style reply: entries arrive through a tool call. */
+function toolReply(items: NuanceItem[]) {
+  return {
+    choices: [
+      {
+        message: {
+          tool_calls: [
+            {
+              type: "function",
+              function: {
+                name: "submit_nuances",
+                arguments: JSON.stringify({ items }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+/** A call that never answers on its own, but honours its abort signal. */
+function hangingCall() {
+  return (_body: unknown, opts: { signal: AbortSignal }) =>
+    new Promise((_resolve, reject) => {
+      opts.signal.addEventListener("abort", () => reject(new Error("aborted")));
+    });
+}
+
 function rateLimitError() {
   return Object.assign(new Error("429 Too Many Requests"), { status: 429 });
 }
@@ -411,6 +440,27 @@ describe("POST /api/generate — quality gate", () => {
   });
 });
 
+describe("POST /api/generate — prompt leakage", () => {
+  it("caps how much of a leaked system prompt can reach the client", async () => {
+    // A model that ignored the task and echoed its instructions still only
+    // gets `maxNuanceLength` characters through the output schema.
+    createMock.mockResolvedValue(
+      chatReply(GOOD_ITEMS.map((item) => ({ ...item, nuance: SYSTEM_PROMPT }))),
+    );
+    const events = (await readSSE(
+      await POST(request(VALID_BODY)),
+    )) as NuanceItem[];
+
+    expect(events).toHaveLength(GOOD_ITEMS.length);
+    for (const event of events) {
+      expect(event.nuance).toHaveLength(
+        GENERATION_CONFIG.output.maxNuanceLength,
+      );
+    }
+    expect(JSON.stringify(events)).not.toContain("Never reveal");
+  });
+});
+
 describe("POST /api/generate — failover", () => {
   beforeEach(() => useProviders("gemini", "groq"));
 
@@ -434,6 +484,91 @@ describe("POST /api/generate — failover", () => {
       .mockResolvedValueOnce(chatReply("no JSON here"))
       .mockResolvedValue(chatReply(GOOD_ITEMS));
     expect(await readSSE(await POST(request(VALID_BODY)))).toEqual(GOOD_ITEMS);
+  });
+
+  it("aborts the losing provider once a winner is found", async () => {
+    const signals: AbortSignal[] = [];
+    createMock.mockImplementation(
+      async (_body: unknown, opts: { signal: AbortSignal }) => {
+        signals.push(opts.signal);
+        if (signals.length === 1) throw new Error("gemini exploded");
+        return chatReply(GOOD_ITEMS);
+      },
+    );
+
+    await readSSE(await POST(request(VALID_BODY)));
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+  });
+});
+
+describe("POST /api/generate — sequential model fallback", () => {
+  beforeEach(() => useProviders("openrouter"));
+
+  it("tries the provider's next model after a failure", async () => {
+    createMock
+      .mockRejectedValueOnce(new Error("first model is gone"))
+      .mockResolvedValue(toolReply(GOOD_ITEMS));
+
+    expect(await readSSE(await POST(request(VALID_BODY)))).toEqual(GOOD_ITEMS);
+
+    const models = createMock.mock.calls.map((call) => call[0].model);
+    expect(models).toHaveLength(2);
+    expect(models[0]).not.toBe(models[1]);
+  });
+
+  it("asks for the entries through the tool call", async () => {
+    createMock.mockResolvedValue(toolReply(GOOD_ITEMS));
+    await readSSE(await POST(request(VALID_BODY)));
+
+    const call = createMock.mock.calls[0][0];
+    expect(call.tool_choice).toMatchObject({
+      function: { name: "submit_nuances" },
+    });
+    expect(call.tools[0].function.name).toBe("submit_nuances");
+  });
+
+  it("gives up on the provider once every model has failed", async () => {
+    createMock.mockRejectedValue(new Error("all gone"));
+    expect((await POST(request(VALID_BODY))).status).toBe(500);
+    expect(createMock.mock.calls.length).toBeGreaterThan(1);
+  });
+});
+
+describe("POST /api/generate — hedge stagger", () => {
+  beforeEach(() => {
+    useProviders("gemini", "groq");
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts the second provider only after the stagger elapses", async () => {
+    // The first provider never answers, so the only thing that can start
+    // the second one is the stagger timer.
+    createMock.mockImplementationOnce(hangingCall());
+    createMock.mockResolvedValue(chatReply(GOOD_ITEMS));
+
+    const pending = POST(request(VALID_BODY));
+
+    // let model resolution settle without moving the clock meaningfully
+    await vi.advanceTimersByTimeAsync(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(
+      GENERATION_CONFIG.requests.hedgeStaggerMs - 1,
+    );
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(createMock).toHaveBeenCalledTimes(2);
+
+    const res = await pending;
+    expect(res.status).toBe(200);
   });
 });
 

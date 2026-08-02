@@ -181,6 +181,20 @@ export const MAP_CONFIG = {
     max: 10,
     step: 2,
   },
+  /**
+   * Legibility floor for canvas text. Below the zoom at which the smallest
+   * text would render under `minRenderedTextPx`, the counter-scale grows to
+   * hold it there — so zooming out keeps shrinking the map without making
+   * anything unreadable.
+   */
+  legibility: {
+    minRenderedTextPx: 8,
+    /** Smallest font drawn on the canvas: the axis tick labels. */
+    smallestFontPx: {
+      desktop: 10,
+      mobile: 14,
+    },
+  },
   /** Pan/zoom limits exposed by React Flow. */
   zoom: {
     desktopMin: 0.5,

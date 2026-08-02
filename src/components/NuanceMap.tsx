@@ -51,12 +51,23 @@ function quadrantIndex(x: number, y: number): number {
   return x > 0 ? (y > 0 ? 0 : 1) : y > 0 ? 2 : 3;
 }
 
-// Counter-scale for zooming in past 1:1 — markers, labels and ticks keep a
-// constant on-screen size while positions spread apart, instead of scaling
-// up until they overlap and crush each other. Below 1:1 (overview) nothing
-// changes: content zooms out naturally.
-function useCounterScale(): number {
-  return useStore((s) => 1 / Math.max(s.transform[2], 1));
+// Counter-scale keeps text and markers legible at any zoom.
+//
+// Above 1:1 it cancels the zoom, so positions spread apart while labels and
+// ticks hold a constant on-screen size instead of scaling up until they
+// crush each other. Below 1:1 content would otherwise shrink with the
+// canvas, and at the minimum zoom the smallest text — the axis ticks —
+// lands well under the legibility floor. So from the zoom where that would
+// happen, the counter-scale grows again to hold the rendered size at the
+// floor. `smallestFontPx` is the smallest text drawn at this breakpoint;
+// scaling from it keeps everything larger legible too.
+function useCounterScale(smallestFontPx: number): number {
+  return useStore((s) => {
+    const zoom = s.transform[2];
+    if (zoom >= 1) return 1 / zoom;
+    const floor = MAP_CONFIG.legibility.minRenderedTextPx / smallestFontPx;
+    return Math.max(1, floor / zoom);
+  });
 }
 
 function useIsMobile() {
@@ -76,6 +87,7 @@ function useIsMobile() {
 // Custom Node for displaying words
 interface WordNodeData {
   items: NuanceData[];
+  smallestFontPx: number;
   onDotEnter: (
     event: React.SyntheticEvent<HTMLElement>,
     items: NuanceData[],
@@ -86,7 +98,7 @@ interface WordNodeData {
 const WordNode = ({ data }: { data: WordNodeData }) => {
   const items = data.items;
   const firstItem = items[0];
-  const counterScale = useCounterScale();
+  const counterScale = useCounterScale(data.smallestFontPx);
 
   return (
     <div
@@ -116,7 +128,10 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
           )}
         />
       </button>
-      <div className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg">
+      <div
+        data-testid="node-label"
+        className="mt-1 text-white/90 text-[16px] sm:text-[11px] font-medium whitespace-nowrap select-none px-2 py-1 sm:px-1.5 sm:py-0.5 bg-black/30 rounded backdrop-blur-md border border-white/10 shadow-lg"
+      >
         {firstItem.word}
         {items.length > 1 && (
           <span
@@ -134,9 +149,13 @@ const WordNode = ({ data }: { data: WordNodeData }) => {
 // Custom Node for the Origin lines
 const ORIGIN_CENTER = MAP_CONFIG.originSizePx / 2;
 
-const OriginNode = ({ data }: { data: { scale: number } }) => {
+const OriginNode = ({
+  data,
+}: {
+  data: { scale: number; smallestFontPx: number };
+}) => {
   const scale = data.scale;
-  const counterScale = useCounterScale();
+  const counterScale = useCounterScale(data.smallestFontPx);
   // Lines/ticks must stay visible after fitView zooms out — thicker when
   // the coordinate scale is compressed (mobile) since zoom shrinks them.
   // Counter-scaled so the lines don't turn into thick bars when zoomed in.
@@ -257,6 +276,9 @@ function NuanceMapContent({
   const { fitView } = useReactFlow();
   const isMobile = useIsMobile();
   const scale = isMobile ? MAP_CONFIG.scale.mobile : MAP_CONFIG.scale.desktop;
+  const smallestFontPx = isMobile
+    ? MAP_CONFIG.legibility.smallestFontPx.mobile
+    : MAP_CONFIG.legibility.smallestFontPx.desktop;
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
@@ -356,8 +378,11 @@ function NuanceMapContent({
       : hoverInfo.y - h - MAP_CONFIG.tooltip.verticalGapPx;
     const clamp = (v: number, min: number, max: number) =>
       Math.min(Math.max(v, min), Math.max(max, min));
-    const dx = clamp(rawLeft, pad, container.clientWidth - w - pad) - rawLeft;
-    const dy = clamp(rawTop, pad, container.clientHeight - h - pad) - rawTop;
+    // Same box the anchor was measured against — clientWidth/Height exclude
+    // the border and would let an edge tooltip hang a pixel outside
+    const bounds = container.getBoundingClientRect();
+    const dx = clamp(rawLeft, pad, bounds.width - w - pad) - rawLeft;
+    const dy = clamp(rawTop, pad, bounds.height - h - pad) - rawTop;
     setShift((prev) => (prev.dx === dx && prev.dy === dy ? prev : { dx, dy }));
   }, [hoverInfo]);
 
@@ -368,7 +393,7 @@ function NuanceMapContent({
     outNodes.push({
       id: "origin",
       position: { x: 0, y: 0 },
-      data: { scale },
+      data: { scale, smallestFontPx },
       type: "originNode",
       selectable: false,
       draggable: false,
@@ -398,7 +423,12 @@ function NuanceMapContent({
         id: `word-${i}`,
         // -y because React Flow's canvas is Y-down, but cartesian data coordinates are Y-up
         position: { x: group.x * scale, y: -group.y * scale },
-        data: { items: group.items, onDotEnter, onDotLeave: scheduleHide },
+        data: {
+          items: group.items,
+          smallestFontPx,
+          onDotEnter,
+          onDotLeave: scheduleHide,
+        },
         type: "wordNode",
         draggable: false,
         selectable: false,
@@ -407,7 +437,7 @@ function NuanceMapContent({
     });
 
     return outNodes;
-  }, [data, scale, onDotEnter, scheduleHide]);
+  }, [data, scale, smallestFontPx, onDotEnter, scheduleHide]);
 
   // Debounced fitView — settles after items stop arriving (streaming)
   useEffect(() => {
@@ -445,6 +475,7 @@ function NuanceMapContent({
   return (
     <div
       ref={containerRef}
+      data-testid="map-container"
       className="relative w-full flex-1 min-h-0 sm:flex-none sm:h-175 bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-2xl overflow-hidden"
     >
       <ReactFlow
@@ -467,19 +498,27 @@ function NuanceMapContent({
           color="rgba(255,255,255,0.5)"
           variant={BackgroundVariant.Dots}
         />
+        {/* my-, not m-: a horizontal margin on a top-center panel offsets
+            it from the centre it is supposed to mark */}
         <Panel
           position="top-center"
-          className="pointer-events-none z-20! m-2! max-w-[70%] sm:m-3!"
+          className="pointer-events-none z-20! my-2! max-w-[70%] sm:my-3!"
         >
-          <div className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+          <div
+            data-testid="y-axis-label"
+            className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm"
+          >
             ↑ {yAxisLabel} (+Y)
           </div>
         </Panel>
         <Panel
           position="center-right"
-          className="pointer-events-none z-20! m-2! max-w-[70%] sm:m-3!"
+          className="pointer-events-none z-20! mx-2! max-w-[70%] sm:mx-3!"
         >
-          <div className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+          <div
+            data-testid="x-axis-label"
+            className="max-w-full truncate whitespace-nowrap rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[11px] font-bold tracking-wider text-white/90 shadow-xl backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm"
+          >
             → {xAxisLabel} (+X)
           </div>
         </Panel>
