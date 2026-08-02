@@ -130,6 +130,22 @@ export async function currentZoom(page: Page): Promise<number> {
   return match ? Number(match[1]) : 1;
 }
 
+/**
+ * Font size as it reaches the screen.
+ *
+ * `offsetHeight` is the pre-transform layout height, so the ratio against
+ * the painted height is the total scale applied by zoom and counter-scale
+ * together.
+ */
+export async function renderedFontPx(locator: Locator): Promise<number> {
+  return locator.evaluate((el) => {
+    const fontSize = Number.parseFloat(getComputedStyle(el).fontSize);
+    const layoutHeight = (el as HTMLElement).offsetHeight;
+    const paintedHeight = el.getBoundingClientRect().height;
+    return fontSize * (paintedHeight / layoutHeight);
+  });
+}
+
 /** Click a zoom control until it is exhausted or `times` is reached. */
 async function clickZoom(page: Page, control: string, times: number) {
   const button = page.locator(control);

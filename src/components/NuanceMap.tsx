@@ -73,10 +73,14 @@ function useCounterScale(smallestFontPx: number): number {
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
+    // Mirror Tailwind's `sm:` exactly — it is `min-width`, so the breakpoint
+    // width itself is *desktop*. Querying `max-width` here instead would make
+    // both sides true at exactly that width, and the geometry chosen in JS
+    // would disagree with the font sizes the stylesheet actually applies.
     const mq = window.matchMedia(
-      `(max-width: ${MAP_CONFIG.mobileBreakpointPx}px)`,
+      `(min-width: ${MAP_CONFIG.mobileBreakpointPx}px)`,
     );
-    const update = () => setIsMobile(mq.matches);
+    const update = () => setIsMobile(!mq.matches);
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);

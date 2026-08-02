@@ -160,7 +160,12 @@ export const RATE_LIMIT_CONFIG = {
 } as const;
 
 export const MAP_CONFIG = {
-  /** Viewport width at which the compact map geometry is enabled. */
+  /**
+   * Tailwind's `sm:` breakpoint. Below this width the compact map geometry
+   * applies; at this width and above the full geometry does, matching the
+   * stylesheet — `sm:` is a `min-width` query, so the boundary itself is
+   * already the wider layout.
+   */
   mobileBreakpointPx: 640,
   /** Canvas pixels represented by one generated coordinate unit. */
   scale: {

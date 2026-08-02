@@ -7,6 +7,7 @@ import {
   currentZoom,
   intersectionArea,
   relativeBox,
+  renderedFontPx,
   SPREAD,
   search,
   stubGenerate,
@@ -217,20 +218,6 @@ test.describe("legibility", () => {
   /** On-screen height of a node label, i.e. after zoom and counter-scale. */
   async function labelHeight(page: import("@playwright/test").Page) {
     return (await box(page.getByTestId("node-label").first())).height;
-  }
-
-  /**
-   * Font size as it reaches the screen. `offsetHeight` is the pre-transform
-   * layout height, so the ratio against the painted height is the total
-   * scale applied by zoom and counter-scale together.
-   */
-  async function renderedFontPx(locator: import("@playwright/test").Locator) {
-    return locator.evaluate((el) => {
-      const fontSize = Number.parseFloat(getComputedStyle(el).fontSize);
-      const layoutHeight = (el as HTMLElement).offsetHeight;
-      const paintedHeight = el.getBoundingClientRect().height;
-      return fontSize * (paintedHeight / layoutHeight);
-    });
   }
 
   test("label size is constant at and above 1:1 (G-01)", async ({ page }) => {

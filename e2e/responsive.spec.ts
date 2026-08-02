@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { MAP_CONFIG } from "../src/lib/config";
-import { box, SPREAD, search, stubGenerate, zoomToMinimum } from "./fixtures";
+import {
+  box,
+  renderedFontPx,
+  SPREAD,
+  search,
+  stubGenerate,
+  zoomToMinimum,
+} from "./fixtures";
 
 const MOBILE = { width: 390, height: 780 };
 const DESKTOP = { width: 1280, height: 900 };
@@ -113,6 +120,63 @@ test.describe("desktop", () => {
     await search(page);
     await expect(page.locator(".react-flow__minimap")).toBeVisible();
     await expect(page.getByText("Drag to pan, Scroll to zoom")).toBeVisible();
+  });
+});
+
+/**
+ * The breakpoint width itself.
+ *
+ * Tailwind's `sm:` is a min-width query, so at exactly this width the
+ * stylesheet already applies the wider layout. If the component's own media
+ * query disagreed, it would size the map for one breakpoint while the text
+ * rendered at the other — and the legibility floor, which is derived from
+ * the smallest font at the current breakpoint, would be computed against a
+ * font size that is not on screen.
+ */
+test.describe("at the breakpoint width (J-09)", () => {
+  test.use({ viewport: { width: 640, height: 800 } });
+
+  test.beforeEach(async ({ page }) => {
+    await stubGenerate(page);
+    await page.goto("/");
+  });
+
+  test("takes the same side of the boundary as the stylesheet", async ({
+    page,
+  }) => {
+    await search(page);
+    expect(await coordinateScale(page)).toBeCloseTo(
+      MAP_CONFIG.scale.desktop,
+      0,
+    );
+    await expect(page.locator(".react-flow__minimap")).toBeVisible();
+  });
+
+  test("keeps tick labels above the legibility floor at minimum zoom", async ({
+    page,
+  }) => {
+    await search(page);
+    await zoomToMinimum(page);
+
+    const tick = page
+      .locator(".react-flow__node-originNode .font-mono")
+      .first();
+    expect(await renderedFontPx(tick)).toBeGreaterThanOrEqual(
+      MAP_CONFIG.legibility.minRenderedTextPx,
+    );
+  });
+});
+
+test.describe("one pixel below the breakpoint (J-10)", () => {
+  test.use({ viewport: { width: 639, height: 800 } });
+
+  test("uses the compact geometry", async ({ page }) => {
+    await stubGenerate(page);
+    await page.goto("/");
+    await search(page);
+
+    expect(await coordinateScale(page)).toBeCloseTo(MAP_CONFIG.scale.mobile, 0);
+    await expect(page.locator(".react-flow__minimap")).toBeHidden();
   });
 });
 
