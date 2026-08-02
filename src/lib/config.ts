@@ -95,10 +95,15 @@ export const GENERATION_CONFIG = {
     defaultTimeoutMs: 25 * SECOND_MS,
     sdkMaxRetries: 0,
   },
-  /** Limits applied before user input is interpolated into the prompt. */
+  /**
+   * Limits applied before user input is interpolated into the prompt.
+   * Both fields are deliberately the same number: the client and the API
+   * enforce one shared rule, so a value that types fine can never be
+   * rejected by the server.
+   */
   input: {
-    maxWordLength: 64,
-    maxAxisLabelLength: 80,
+    maxWordLength: 24,
+    maxAxisLabelLength: 24,
   },
   /** Prompt targets that define the generated map's density and range. */
   prompt: {
@@ -126,6 +131,14 @@ export const GENERATION_CONFIG = {
   mockCoordinateOffset: 5,
 } as const;
 
+/** Input-field behaviour that only the browser cares about. */
+export const INPUT_UI_CONFIG = {
+  /** Show the character counter once the value reaches this length. */
+  counterThresholdChars: 20,
+  /** How long a request may run before the user is told it is slow. */
+  slowWarningDelayMs: 5 * SECOND_MS,
+} as const;
+
 export const CACHE_CONFIG = {
   /** Maximum entries retained by the per-process memory fallback. */
   maxEntries: 200,
@@ -147,7 +160,12 @@ export const RATE_LIMIT_CONFIG = {
 } as const;
 
 export const MAP_CONFIG = {
-  /** Viewport width at which the compact map geometry is enabled. */
+  /**
+   * Tailwind's `sm:` breakpoint. Below this width the compact map geometry
+   * applies; at this width and above the full geometry does, matching the
+   * stylesheet — `sm:` is a `min-width` query, so the boundary itself is
+   * already the wider layout.
+   */
   mobileBreakpointPx: 640,
   /** Canvas pixels represented by one generated coordinate unit. */
   scale: {
@@ -167,6 +185,20 @@ export const MAP_CONFIG = {
     min: -10,
     max: 10,
     step: 2,
+  },
+  /**
+   * Legibility floor for canvas text. Below the zoom at which the smallest
+   * text would render under `minRenderedTextPx`, the counter-scale grows to
+   * hold it there — so zooming out keeps shrinking the map without making
+   * anything unreadable.
+   */
+  legibility: {
+    minRenderedTextPx: 8,
+    /** Smallest font drawn on the canvas: the axis tick labels. */
+    smallestFontPx: {
+      desktop: 10,
+      mobile: 14,
+    },
   },
   /** Pan/zoom limits exposed by React Flow. */
   zoom: {

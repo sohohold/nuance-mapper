@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
-import { jsonrepair } from "jsonrepair";
 import OpenAI from "openai";
 import { cacheGet, cacheSet } from "@/lib/cache";
+import { buildCacheKey } from "@/lib/cache-key";
 import {
   GENERATION_CONFIG,
   MODEL_PROVIDERS,
   type ModelProviderConfig,
 } from "@/lib/config";
+import {
+  type NuanceItem,
+  parseModelContent,
+  qualityIssue,
+  sanitizeItems,
+} from "@/lib/model-output";
+import { buildUserPrompt, SYSTEM_PROMPT } from "@/lib/prompt";
 import { rateLimit } from "@/lib/rate-limit";
-
-interface NuanceItem {
-  word: string;
-  x: number;
-  y: number;
-  nuance: string;
-}
+import { validateAxisLabel, validateWord } from "@/lib/validation";
 
 class AllModelsFailedError extends Error {
   constructor(
@@ -179,98 +180,6 @@ function createSSEStream(
   });
 }
 
-// ── Normalize model response to array ────────────────────────────────
-function normalizeItems(data: unknown): NuanceItem[] {
-  if (Array.isArray(data)) return data;
-  if (typeof data === "object" && data !== null) {
-    const obj = data as Record<string, unknown>;
-    for (const key of ["results", "words", "synonyms"]) {
-      if (Array.isArray(obj[key])) return obj[key] as NuanceItem[];
-    }
-    const arr = Object.values(obj).find((v) => Array.isArray(v));
-    if (arr) return arr as NuanceItem[];
-  }
-  throw new Error("Could not parse response as items array");
-}
-
-// ── Strip markdown code fences ───────────────────────────────────────
-function stripCodeFences(str: string): string {
-  let s = str.trim();
-  if (s.startsWith("```json")) {
-    s = s.replace(/^```json\n?/, "").replace(/\n?```$/, "");
-  } else if (s.startsWith("```")) {
-    s = s.replace(/^```\n?/, "").replace(/\n?```$/, "");
-  }
-  return s;
-}
-
-// ── Parse model output (tolerates <think> blocks and stray prose) ────
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return JSON.parse(jsonrepair(value));
-  }
-}
-
-function parseModelContent(content: string): NuanceItem[] {
-  const s = stripCodeFences(
-    content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
-  );
-  try {
-    return normalizeItems(parseJson(s));
-  } catch {
-    const start = s.indexOf("[");
-    const end = s.lastIndexOf("]");
-    if (start === -1 || end <= start) throw new Error("No JSON array found");
-    return normalizeItems(parseJson(s.slice(start, end + 1)));
-  }
-}
-
-// ── Sanitize: drop malformed entries, dedupe, clamp coordinates ──────
-function sanitizeItems(items: NuanceItem[], axisMax: number): NuanceItem[] {
-  const seen = new Set<string>();
-  const out: NuanceItem[] = [];
-  for (const item of items) {
-    if (out.length >= GENERATION_CONFIG.output.maxItems) break;
-    if (typeof item?.word !== "string" || !item.word.trim()) continue;
-    const x = Number(item.x);
-    const y = Number(item.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    const word = item.word.trim();
-    if (
-      word.length > GENERATION_CONFIG.output.maxWordLength ||
-      seen.has(word)
-    ) {
-      continue;
-    }
-    seen.add(word);
-    out.push({
-      word,
-      x: Math.max(-axisMax, Math.min(axisMax, x)),
-      y: Math.max(-axisMax, Math.min(axisMax, y)),
-      nuance:
-        typeof item.nuance === "string"
-          ? item.nuance.slice(0, GENERATION_CONFIG.output.maxNuanceLength)
-          : "",
-    });
-  }
-  return out;
-}
-
-function qualityIssue(items: NuanceItem[]): string | null {
-  if (items.length < GENERATION_CONFIG.quality.minItems) {
-    return `only ${items.length} valid items`;
-  }
-  const quadrants = new Set(
-    items.map((i) => `${i.x >= 0 ? "R" : "L"}${i.y >= 0 ? "T" : "B"}`),
-  );
-  if (quadrants.size < GENERATION_CONFIG.quality.minQuadrants) {
-    return `items cover only ${quadrants.size} quadrants`;
-  }
-  return null;
-}
-
 export async function POST(req: Request) {
   // Hoisted so the catch block can fall back to the cache on upstream 429s
   let cacheKey: string | null = null;
@@ -301,31 +210,35 @@ export async function POST(req: Request) {
       string,
       unknown
     >;
-    if (
-      typeof word !== "string" ||
-      !word.trim() ||
-      word.length > GENERATION_CONFIG.input.maxWordLength
-    ) {
-      return NextResponse.json({ error: "Word is required" }, { status: 400 });
-    }
-    const isValidAxis = (v: unknown): v is string =>
-      typeof v === "string" &&
-      v.trim().length > 0 &&
-      v.length <= GENERATION_CONFIG.input.maxAxisLabelLength;
-    if (!isValidAxis(xAxis) || !isValidAxis(yAxis)) {
+    // Same validators the browser runs, so a payload the UI would have
+    // blocked is rejected identically when it arrives from anywhere else
+    const wordCheck = validateWord(word);
+    if (!wordCheck.ok) {
       return NextResponse.json(
-        { error: "Axis labels are required" },
+        { error: "Word is required", code: wordCheck.code, max: wordCheck.max },
         { status: 400 },
       );
     }
+    const xCheck = validateAxisLabel(xAxis);
+    const yCheck = validateAxisLabel(yAxis);
+    if (!xCheck.ok || !yCheck.ok) {
+      const failed = xCheck.ok ? yCheck : xCheck;
+      return NextResponse.json(
+        {
+          error: "Axis labels are required",
+          code: failed.code,
+          max: failed.max,
+        },
+        { status: 400 },
+      );
+    }
+    // Narrowed by the validators above
+    const safeWord = word as string;
+    const safeXAxis = xAxis as string;
+    const safeYAxis = yAxis as string;
 
     // ── Cache check ────────────────────────────────────────────────
-    // Normalized key (NFKC/trim) so trivial input variants hit. Case is
-    // preserved: the prompt sees the original spelling, and "Apple" and
-    // "apple" are different generations
-    cacheKey = [word, xAxis, yAxis]
-      .map((s) => s.normalize("NFKC").trim())
-      .join("|");
+    cacheKey = buildCacheKey(safeWord, safeXAxis, safeYAxis);
     if (!skipCache) {
       const cached = await cacheGet<NuanceItem>(cacheKey);
       if (cached) {
@@ -353,7 +266,7 @@ export async function POST(req: Request) {
             y: -GENERATION_CONFIG.mockCoordinateOffset,
             nuance: "環境変数を設定してください",
           },
-          { word: word, x: 0, y: 0, nuance: "入力された単語" },
+          { word: safeWord, x: 0, y: 0, nuance: "入力された単語" },
         ],
         false,
       );
@@ -378,54 +291,11 @@ export async function POST(req: Request) {
 
     const axisMax = GENERATION_CONFIG.prompt.axisMax;
 
-    const prompt = `
-      # Role
-      あなたは高度な日本語の語彙力を持つ「ニュアンス・マッパー」です。
-
-      # Task
-      入力語「${word}」の類語・言い換え表現を、2次元の座標空間上に**なるべく広く分散させて**配置してください。
-      **重要: まず座標空間の各領域を意識し、その領域にふさわしい表現を探す、という順序で考えてください。**
-
-      # Axes Definition (座標軸の定義)
-      ## X軸: ${xAxis}
-      -${axisMax}: ${xAxis}が最も低い/反対の性質 ← 0: 中立 → +${axisMax}: ${xAxis}が最も高い/強い性質
-
-      ## Y軸: ${yAxis}
-      -${axisMax}: ${yAxis}が最も低い/反対の性質 ← 0: 中立 → +${axisMax}: ${yAxis}が最も高い/強い性質
-
-      # Zone-Based Generation Strategy（ゾーン分散戦略）
-      座標平面を以下の9ゾーンに分け、**各ゾーンに最低1つ、合計${GENERATION_CONFIG.prompt.targetItems}個**の単語を配置してください。
-      ゾーン名は出力に含めないでください。
-
-      1. 右上 (x>0, y>0): ${xAxis}が高く、${yAxis}も高い表現
-      2. 右下 (x>0, y<0): ${xAxis}が高いが、${yAxis}は低い表現
-      3. 左上 (x<0, y>0): ${xAxis}が低いが、${yAxis}は高い表現
-      4. 左下 (x<0, y<0): ${xAxis}も${yAxis}も低い表現
-      5. 右端 (x≈+${axisMax}): ${xAxis}が極端に高い表現
-      6. 左端 (x≈-${axisMax}): ${xAxis}が極端に低い表現
-      7. 上端 (y≈+${axisMax}): ${yAxis}が極端に高い表現
-      8. 下端 (y≈-${axisMax}): ${yAxis}が極端に低い表現
-      9. 中央 (x≈0, y≈0): 中立的な表現
-
-      # Output Format (出力形式)
-      結果は必ず **JSON配列のみ** で出力してください。Markdownのコードブロックは不要です。
-      JSON以外の説明文や挨拶は一切含めないでください。
-      [
-        {
-          "word": "単語",
-          "x": 数値(-${axisMax}〜${axisMax}),
-          "y": 数値(-${axisMax}〜${axisMax}),
-          "nuance": "その言葉が持つ微細なニュアンスの短い解説（20文字以内）"
-        },
-        ...
-      ]
-
-      # Constraints
-      1. **座標空間全体をカバーすること。** 4象限すべてに単語が存在し、|x|≥${GENERATION_CONFIG.prompt.edgeThreshold} や |y|≥${GENERATION_CONFIG.prompt.edgeThreshold} の端にも配置すること。
-      2. 入力語「${word}」と意味的に関連がある語を選ぶこと。ただし、軸の端をカバーするためにやや広い関連語も許容する。
-      3. 入力語「${word}」の品詞に合わせて適切な類語を選ぶこと。
-      4. 同じような座標に複数の単語が集中しないこと。
-    `;
+    const prompt = buildUserPrompt({
+      word: safeWord,
+      xAxis: safeXAxis,
+      yAxis: safeYAxis,
+    });
 
     // ── Helper: call a single model, returns sanitized items ─────────
     async function callModel(
@@ -439,11 +309,7 @@ export async function POST(req: Request) {
         {
           model,
           messages: [
-            {
-              role: "system",
-              content:
-                "You are a helpful assistant that outputs strictly JSON.",
-            },
+            { role: "system", content: SYSTEM_PROMPT },
             {
               role: "user",
               content: toolOutput

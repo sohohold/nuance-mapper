@@ -26,6 +26,7 @@ function HomeContent() {
   const [loading, setLoading] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [degraded, setDegraded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [lastQuery, setLastQuery] = useState<{
     word: string;
     xAxis: string;
@@ -51,6 +52,7 @@ function HomeContent() {
     setData([]);
     setFromCache(false);
     setDegraded(false);
+    setError(null);
     setLastQuery({ word, xAxis, yAxis });
 
     try {
@@ -108,10 +110,12 @@ function HomeContent() {
           throw new Error(result.details || result.error);
         }
       }
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      alert(
-        error instanceof Error && error.message === "RATE_LIMIT"
+    } catch (err) {
+      console.error("Error fetching data:", err);
+      // Inline rather than alert(): a modal dialog blocks the page, cannot
+      // be styled, and is invisible to anything but a spy in tests
+      setError(
+        err instanceof Error && err.message === "RATE_LIMIT"
           ? t.errorRateLimit
           : t.errorGeneric,
       );
@@ -159,6 +163,15 @@ function HomeContent() {
         {/* Input Section */}
         <div className="w-full shrink-0">
           <InputArea onSearch={handleSearch} isLoading={loading} />
+          {error && (
+            <p
+              role="alert"
+              data-testid="request-error"
+              className="w-full max-w-2xl mx-auto mt-2 text-center text-xs sm:text-sm text-amber-300"
+            >
+              {error}
+            </p>
+          )}
         </div>
 
         {/* Visualization Section — on mobile it takes all remaining
