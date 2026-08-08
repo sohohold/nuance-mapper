@@ -1,119 +1,193 @@
-# さくらのクラウドへの Terraform デプロイ手順
+# Ubuntu仮想サーバへのデプロイ
 
-[sacloud/sakura](https://registry.terraform.io/providers/sacloud/sakura/latest) プロバイダを使って、
-このリポジトリの Next.js アプリ（nuance-mapper）をさくらのクラウド上の Ubuntu サーバにデプロイする構成です。
+[`sacloud/sakura`](https://registry.terraform.io/providers/sacloud/sakura/latest)プロバイダを使い、Nuance MapperをさくらのクラウドのUbuntu仮想サーバへ構築するTerraform構成です。初回起動時にNode.jsの導入、アプリのビルド、systemdサービスの登録までを自動実行します。
 
-## 作られるもの
+## 構成
+
+```mermaid
+flowchart LR
+    T[ローカルTerraform] --> C[さくらのクラウド]
+    C --> F[パケットフィルタ<br/>SSH / HTTP]
+    C --> D[20GiB SSD]
+    C --> V[Ubuntu VM]
+    F --> V
+    D --> V
+    V --> S[起動スクリプト]
+    S --> N[Node.js + pnpm]
+    S --> A[Next.js standalone]
+    A --> M[systemd]
+```
+
+## 作成されるリソース
 
 | リソース | 内容 |
 | --- | --- |
-| `sakura_server` | 2コア / 4GiB の仮想サーバ（共有セグメント接続、グローバルIP 1つ） |
-| `sakura_disk` | Ubuntu 最新パブリックアーカイブから作った 20GiB SSD |
-| `sakura_packet_filter(_rules)` | SSH(22) と HTTP(80) だけ受け付けるファイアウォール |
-| `sakura_script` | 初回起動時に Node.js 24 導入 → `git clone` → `pnpm build` → systemd 常駐化まで自動実行 |
+| `sakura_server` | 既定で2コア／4GiB、共有セグメント接続の仮想サーバ |
+| `sakura_disk` | Ubuntuの最新公開アーカイブから作成する20GiB SSD |
+| `sakura_packet_filter` / `_rules` | SSH（22）、HTTP（80）、必要な戻り通信だけを許可 |
+| `sakura_script` | Node.js導入、clone、ビルド、systemd登録を行う起動スクリプト |
 
-> **料金に注意**: `terraform apply` した時点から課金が始まります（このスペックで月数千円程度、時間割あり）。
-> 試し終わったら `terraform destroy` で全削除できます。
+CPU、メモリ、ディスク容量、ゾーンなどは[`terraform.tfvars.example`](./terraform.tfvars.example)を基に変更できます。
 
-## 0. 前提
+## 前提
 
-- [さくらのクラウド](https://cloud.sakura.ad.jp/)のアカウント
-- SSH 鍵ペア（なければ `ssh-keygen -t ed25519` で作成）
-- Terraform **1.11 以上**（[インストール手順](https://developer.hashicorp.com/terraform/install)。macOS なら `brew install terraform`）
+- さくらのクラウドのアカウントとAPIキー
+- Terraform 1.11以上
+- SSH鍵ペア
+- サーバーからcloneできる公開Gitリポジトリ
 
-## 1. APIキーを発行して環境変数に設定
-
-さくらのクラウドのコントロールパネル → 右上のアカウント名 → **APIキー** → 「追加」で
-アクセストークンとシークレットを発行し、ターミナルで環境変数に設定します:
+SSH鍵がない場合は、次のように作成できます。
 
 ```bash
-export SAKURA_ACCESS_TOKEN="発行したトークン"
+ssh-keygen -t ed25519
+```
+
+## デプロイ手順
+
+### 1. API認証情報を設定する
+
+さくらのクラウドのコントロールパネルでAPIキーを発行し、現在のシェルへ設定します。
+
+```bash
+export SAKURA_ACCESS_TOKEN="発行したアクセストークン"
 export SAKURA_ACCESS_TOKEN_SECRET="発行したシークレット"
 ```
 
-Terraform はこの環境変数を自動で読むので、`.tf` ファイルに書く必要はありません（書かないでください）。
+Terraformが環境変数を読み取るため、認証情報を`.tf`ファイルへ記述する必要はありません。
 
-## 2. 変数ファイルを作る
+### 2. 変数ファイルを準備する
 
 ```bash
 cd terraform/server
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-`terraform.tfvars` を開いて、最低限 `ssh_public_key` に自分の公開鍵
-（`cat ~/.ssh/id_ed25519.pub` の出力）を貼り付けます。
+`terraform.tfvars`を編集し、少なくとも`ssh_public_key`へSSH公開鍵の内容を設定します。必要に応じてゾーン、サーバースペック、リポジトリURL、ブランチも変更してください。
 
-LLM の API キーはこのファイルには設定しません。`sakura_script` の内容も
-Terraform state もどちらも平文で保存されるため、APIキーを混ぜたくないからです。
-使いたい場合はデプロイ後にSSHして手動で設定します（手順4参照）。未設定でも
-アプリはモックデータで動作します。
+```hcl
+ssh_public_key = "ssh-ed25519 AAAA..."
+```
 
-## 3. デプロイする（Terraform の基本 3 コマンド）
+LLM APIキーは起動スクリプトやTerraform変数へ含めないでください。`sakura_script`の内容とTerraform stateに平文で保存されるため、デプロイ後にサーバー上で設定します。
+
+### 3. 内容を確認して作成する
 
 ```bash
-terraform init    # 初回のみ: プロバイダのダウンロード
-terraform plan    # 何が作られるかのプレビュー（まだ何も起きない）
-terraform apply   # 実際に作成。内容を確認して yes と入力
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan
+terraform apply
 ```
 
-`apply` が終わると IP アドレスなどが出力されます:
+完了すると、アプリURL、IPアドレス、SSHコマンドが出力されます。
 
-```
+```text
 app_url     = "http://203.0.113.10/"
 ip_address  = "203.0.113.10"
 ssh_command = "ssh ubuntu@203.0.113.10"
 ```
 
-サーバ起動後、初回セットアップ（Node.js インストール + ビルド）に **5〜10分** かかります。
-その間 `app_url` は応答しないので少し待ってください。
+サーバー作成後も起動スクリプトによる依存関係の導入とビルドが続きます。アプリが応答するまで数分かかる場合があります。
 
-## 4. 動作確認・トラブルシューティング
+## 動作確認
 
 ```bash
 ssh ubuntu@<ip_address>
+```
 
-# セットアップの進行ログ
+```bash
+# 初回セットアップの進行状況
 sudo tail -f /var/log/nuance-mapper-setup.log
 
-# アプリの状態とログ
-systemctl status nuance-mapper
+# サービスの状態
+sudo systemctl status nuance-mapper
+
+# アプリケーションログ
 sudo journalctl -u nuance-mapper -f
 ```
 
-### LLM プロバイダのAPIキーを設定する(任意)
+## LLM APIキーを設定する
 
-未設定でもモックデータで動作しますが、実際のLLMを使いたい場合はデプロイ後に
-SSHして手動で設定します(Terraform経由にしないのは、state に平文で残るのを
-避けるためです):
+APIキーを設定しなくてもモックデータで動作します。実際のLLMを利用する場合は、SSH接続後に専用ユーザーの`.env.local`へ追記します。
 
 ```bash
 sudo -u app vi /opt/nuance-mapper/.env.local
-# GEMINI_API_KEY=... のように1行ずつ追記
 sudo systemctl restart nuance-mapper
 ```
 
-## 5. 変更の反映と後片付け
+設定例:
 
-- **スペック変更**: `terraform.tfvars` の `core` / `memory` などを変えて再度 `terraform apply`
-- **アプリの更新**: サーバに SSH して以下を実行(`pnpm build` は `.next/standalone` を作り直すので、毎回 `public`/`.next/static` の再コピーが必要):
-  ```bash
-  cd /opt/nuance-mapper
-  sudo -u app -H git pull
-  sudo -u app -H pnpm install --frozen-lockfile
-  sudo -u app -H pnpm build
-  sudo -u app -H cp -r public .next/standalone/public
-  sudo -u app -H cp -r .next/static .next/standalone/.next/static
-  sudo systemctl restart nuance-mapper
-  ```
-- **全削除（課金停止）**:
-
-```bash
-terraform destroy   # 内容を確認して yes
+```dotenv
+GEMINI_API_KEY=...
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
 ```
 
-## よくあるハマりどころ
+`.env.local`は起動スクリプトによって所有者`app`、パーミッション`600`で作成されます。
 
-- **`Error: 401` / 認証エラー** — 手順 1 の環境変数が現在のターミナルに設定されているか `echo $SAKURA_ACCESS_TOKEN` で確認。
-- **`terraform.tfstate` は消さない・コミットしない** — Terraform が「今何が作られているか」を記録する台帳です。消すと Terraform がリソースを管理できなくなります（`.gitignore` 済み）。
-- **プライベートリポジトリの場合** — サーバ上の自動 `git clone` が失敗します。`repo_url` にトークン付き URL を設定しないでください(sakura_scriptの内容とTerraform stateに平文で残ります)。代わりにデプロイ後にSSHして、自分の認証情報(自分で追加したデプロイ鍵や `gh auth login` など)で手動 clone してから手順3の依存インストール以降を自分で実行するか、リポジトリを公開してください。
-- **HTTPS 化したい** — この構成は HTTP のみです。独自ドメイン + HTTPS が必要なら、systemd ユニットの待ち受けを 3000 番に変えた上で、サーバに [Caddy](https://caddyserver.com/) を入れて 80/443 → 3000 のリバースプロキシにするのが手軽です（パケットフィルタの 443 開放も忘れずに）。
+## アプリを更新する
+
+```bash
+ssh ubuntu@<ip_address>
+cd /opt/nuance-mapper
+sudo -u app -H git pull
+sudo -u app -H pnpm install --frozen-lockfile
+sudo -u app -H pnpm build
+sudo -u app -H cp -r public .next/standalone/public
+sudo -u app -H cp -r .next/static .next/standalone/.next/static
+sudo systemctl restart nuance-mapper
+```
+
+`pnpm build`は`.next/standalone`を作り直すため、`public`と`.next/static`も毎回コピーします。
+
+## インフラ構成を変更する
+
+`terraform.tfvars`を編集した後、差分を確認して適用します。
+
+```bash
+terraform plan
+terraform apply
+```
+
+スペックやディスクなど、変更内容によってはリソースの再作成が発生します。`terraform plan`の`forces replacement`表示を確認してから適用してください。
+
+## リソースを削除する
+
+```bash
+terraform plan -destroy
+terraform destroy
+```
+
+削除後はサーバーへ保存した`.env.local`やログも失われます。必要な情報を退避してから実行してください。課金対象と最新単価は[料金シミュレーション](https://cloud.sakura.ad.jp/payment/simulation/)で確認できます。
+
+## セキュリティ上の考慮事項
+
+- SSHは公開鍵認証のみで、パスワード認証は無効です。
+- パケットフィルタはSSH（22）とHTTP（80）を公開し、それ以外の受信通信を拒否します。
+- 起動スクリプトとTerraform stateへAPIキーやアクセストークンを含めないでください。
+- `terraform.tfvars`と`terraform.tfstate`をリポジトリへコミットしないでください。
+- 現在の構成はHTTPのみです。外部公開時は独自ドメイン、TLS終端、443番ポートの許可を追加してください。
+
+## トラブルシューティング
+
+### `401`などの認証エラー
+
+APIキーの環境変数が、Terraformを実行しているシェルに設定されているか確認します。値そのものを画面共有やログへ出さないよう注意してください。
+
+```bash
+test -n "$SAKURA_ACCESS_TOKEN" && echo "token is set"
+test -n "$SAKURA_ACCESS_TOKEN_SECRET" && echo "secret is set"
+```
+
+### 初回セットアップが完了しない
+
+`/var/log/nuance-mapper-setup.log`を確認します。clone、パッケージ取得、ビルドのいずれで停止したかを特定した後、必要に応じてコマンドを手動で再実行します。
+
+### プライベートリポジトリを使う
+
+トークン付きURLを`repo_url`へ設定しないでください。起動スクリプトとstateに認証情報が残ります。デプロイ後にSSH接続し、専用のデプロイ鍵などを設定したうえで手動cloneしてください。
+
+### HTTPSを有効にする
+
+Next.jsを3000番ポートで待ち受けさせ、Caddyなどのリバースプロキシで80／443番から転送します。合わせてパケットフィルタで443番を許可し、systemdユニットを更新してください。
