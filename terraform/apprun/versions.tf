@@ -8,7 +8,7 @@ terraform {
     }
   }
 
-  # state はさくらのオブジェクトストレージ(S3互換)に保存する。
+  # state はBackblaze B2のS3互換APIに保存する。
   # bucket/key 等の具体値はコミットせず `terraform init -backend-config=backend.hcl` で渡す。
   # backend.hcl は backend.hcl.example をコピーして作成する（.gitignore 済み）。
   backend "s3" {}
