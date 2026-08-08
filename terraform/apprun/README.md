@@ -11,7 +11,7 @@ flowchart LR
     D --> T[Terraform apply]
     R --> A[AppRun 共用型]
     T --> A
-    T <--> S[オブジェクトストレージ<br/>Terraform state]
+    T <--> S[Backblaze B2<br/>Terraform state]
     A --> U[公開URL]
 ```
 
@@ -20,7 +20,7 @@ flowchart LR
 - GitHub Actionsの手動実行によるデプロイ
 - コミットSHAまたは指定値を使ったイメージタグ管理
 - `min_scale = 0`によるアイドル時のスケールゼロ
-- S3互換オブジェクトストレージでのTerraform state共有
+- Backblaze B2のS3互換APIでのTerraform state共有
 - デプロイと削除の同時実行を防ぐconcurrency設定
 - 確認文字列を要求する削除ワークフロー
 - LLM APIキーとRedis認証情報の環境変数注入
@@ -37,7 +37,7 @@ Terraform state用のオブジェクトストレージバケットは、この�
 ## 前提
 
 - さくらのクラウドのアカウントとAPIキー
-- さくらのオブジェクトストレージ
+- Backblaze B2
 - GitHub Actionsを利用できるリポジトリ
 - Terraform 1.11以上、Docker（ローカル実行時）
 
@@ -45,9 +45,13 @@ Terraform state用のオブジェクトストレージバケットは、この�
 
 ### 1. state保存用バケットを作成する
 
-1. さくらのクラウドのコントロールパネルで「オブジェクトストレージ」のサイト利用を開始します。
-2. 世界で一意になるバケット名を指定して作成します。
-3. 「パーミッション設定」からアクセスキーとシークレットキーを発行します。
+1. Backblazeの管理画面でB2 Cloud Storageを有効にします。
+2. 世界で一意になる名前を指定し、非公開（Private）のバケットを作成します。
+3. バケットに表示されるS3 Endpointからregion（例: `us-west-004`）を控えます。
+4. Application Keysから、このバケットだけにアクセスできるRead and WriteのApplication Keyを作成します。
+5. 表示された`keyID`と`applicationKey`を控えます。`applicationKey`は作成時にしか表示されません。
+
+stateを誤って上書きした場合に復旧できるよう、古いファイルバージョンを30～90日残すLifecycle Ruleの設定を推奨します。
 
 バックエンドが自身を保存するバケットを同じTerraform構成で作ることはできないため、この作業だけはTerraform実行前に必要です。
 
@@ -67,9 +71,10 @@ Terraform state用のオブジェクトストレージバケットは、この�
 | --- | --- | :---: |
 | `SAKURA_ACCESS_TOKEN` | さくらのクラウドAPIのアクセストークン | ✓ |
 | `SAKURA_ACCESS_TOKEN_SECRET` | さくらのクラウドAPIのシークレット | ✓ |
-| `SAKURA_OBJECT_STORAGE_ACCESS_KEY` | stateバケットのアクセスキー | ✓ |
-| `SAKURA_OBJECT_STORAGE_SECRET_KEY` | stateバケットのシークレットキー | ✓ |
-| `SAKURA_TFSTATE_BUCKET` | stateバケット名 | ✓ |
+| `B2_APPLICATION_KEY_ID` | B2 Application Key ID（`keyID`） | ✓ |
+| `B2_APPLICATION_KEY` | B2 Application Key（`applicationKey`） | ✓ |
+| `B2_TFSTATE_BUCKET` | B2のstateバケット名 | ✓ |
+| `B2_REGION` | B2のregion（例: `us-west-004`） | ✓ |
 | `SAKURA_REGISTRY_SUBDOMAIN_LABEL` | レジストリのサブドメインラベル | ✓ |
 | `SAKURA_REGISTRY_USERNAME` | レジストリのログインユーザー名 | ✓ |
 | `SAKURA_REGISTRY_PASSWORD` | レジストリのログインパスワード | ✓ |
@@ -106,8 +111,8 @@ cp terraform.tfvars.example terraform.tfvars
 ```bash
 export SAKURA_ACCESS_TOKEN="..."
 export SAKURA_ACCESS_TOKEN_SECRET="..."
-export AWS_ACCESS_KEY_ID="..."
-export AWS_SECRET_ACCESS_KEY="..."
+export AWS_ACCESS_KEY_ID="B2 Application Key ID"
+export AWS_SECRET_ACCESS_KEY="B2 Application Key"
 ```
 
 ### 3. レジストリを作成する
@@ -171,7 +176,8 @@ AppRunアプリとコンテナレジストリが削除されます。stateバケ
 - `backend.hcl`、`terraform.tfvars`、認証情報をリポジトリへコミットしないでください。
 - コントロールパネルや`usacloud`からTerraform管理リソースを直接削除しないでください。
 - GitHub Actionsのデプロイと削除は同一のconcurrency groupで直列化されています。別経路でTerraformを実行する場合も同じstateへの同時操作を避けてください。
+- B2のS3互換APIではTerraformが条件付きPUTで作成するlockfileの動作を保証できないため、`use_lockfile`は有効にしていません。
 
 ## コスト管理
 
-AppRunは`min_scale = 0`のため、アクセスがない間は実行インスタンスをゼロにできます。ただし、コンテナレジストリなど別の課金対象は残ります。利用前に[料金シミュレーション](https://cloud.sakura.ad.jp/payment/simulation/)で最新の単価と構成を確認し、不要なリソースはTerraform経由で削除してください。
+AppRunは`min_scale = 0`のため、アクセスがない間は実行インスタンスをゼロにできます。B2は無料利用枠を超えた保存容量、API呼び出し、転送量などが課金対象になる可能性があります。コンテナレジストリなど、さくら側の課金対象も残ります。利用前に[Backblaze B2 Pricing](https://www.backblaze.com/cloud-storage/pricing)と[さくらのクラウド料金シミュレーション](https://cloud.sakura.ad.jp/payment/simulation/)で最新の単価を確認してください。

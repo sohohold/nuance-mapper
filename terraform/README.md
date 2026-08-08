@@ -9,7 +9,7 @@ Nuance Mapperをさくらのクラウドへ構築するTerraform構成です。�
 | 実行基盤 | AppRun（共用型） | Ubuntu仮想サーバ |
 | アプリ配布 | Dockerイメージ | Gitリポジトリをcloneしてビルド |
 | デプロイ | GitHub Actionsまたはローカル | ローカルから`terraform apply` |
-| Terraform state | オブジェクトストレージ | ローカル |
+| Terraform state | Backblaze B2 | ローカル |
 | スケーリング | `min_scale = 0`、最大数を指定 | 常時起動、固定スペック |
 | ネットワーク | AppRunの公開エンドポイント | 共有セグメント＋パケットフィルタ |
 | 運用単位 | コンテナイメージとリビジョン | OS、Node.js、systemd、アプリ |
@@ -28,7 +28,7 @@ flowchart TB
     A --> GA[GitHub Actions]
     GA --> CR[コンテナレジストリ]
     CR --> AR[AppRun 共用型]
-    GA --> OS[オブジェクトストレージ<br/>Terraform state]
+    GA --> OS[Backblaze B2<br/>Terraform state]
 
     S --> TF[ローカルTerraform]
     TF --> VM[Ubuntu VM]

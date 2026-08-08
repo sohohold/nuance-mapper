@@ -36,25 +36,25 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           cat > backend.hcl <<EOF
-          bucket = "${{ secrets.SAKURA_TFSTATE_BUCKET }}"
+          bucket = "${{ secrets.B2_TFSTATE_BUCKET }}"
           key    = "nuance-mapper/apprun/terraform.tfstate"
-          region = "jp-north-1"
+          region = "${{ secrets.B2_REGION }}"
           endpoints = {
-            s3 = "https://s3.isk01.sakurastorage.jp"
+            s3 = "https://s3.${{ secrets.B2_REGION }}.backblazeb2.com"
           }
           skip_credentials_validation = true
           skip_region_validation      = true
           skip_requesting_account_id  = true
           skip_metadata_api_check     = true
           skip_s3_checksum            = true
-          use_path_style               = true
+          use_path_style              = true
           EOF
 
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: terraform init -backend-config=backend.hcl
 
       - name: Terraform destroy
@@ -62,8 +62,8 @@ jobs:
         env:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.SAKURA_OBJECT_STORAGE_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.SAKURA_OBJECT_STORAGE_SECRET_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
           TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
           TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
           TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}

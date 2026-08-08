@@ -3,20 +3,23 @@
 #   terraform init -backend-config=backend.hcl
 # backend.hcl は .gitignore 済み（bucket名は環境ごとに変わるためコミットしない）
 #
-# bucket は事前に一度だけ手動で作成しておく必要がある(下記READMEの「事前準備」参照)。
+# bucket は事前に一度だけBackblaze B2で作成しておく必要がある（READMEの「初回設定」参照）。
 # 認証情報(アクセスキー/シークレット)はここには書かず、環境変数で渡す:
-#   export AWS_ACCESS_KEY_ID="オブジェクトストレージのアクセスキー"
-#   export AWS_SECRET_ACCESS_KEY="オブジェクトストレージのシークレットキー"
+#   export AWS_ACCESS_KEY_ID="B2 Application Key ID"
+#   export AWS_SECRET_ACCESS_KEY="B2 Application Key"
 
 bucket = "your-unique-tfstate-bucket-name"
 key    = "nuance-mapper/apprun/terraform.tfstate"
-region = "jp-north-1"
+region = "us-west-004" # B2管理画面に表示されたregionへ変更する
 endpoints = {
-  s3 = "https://s3.isk01.sakurastorage.jp"
+  s3 = "https://s3.us-west-004.backblazeb2.com" # regionと揃える
 }
 skip_credentials_validation = true
 skip_region_validation      = true
 skip_requesting_account_id  = true
 skip_metadata_api_check     = true
 skip_s3_checksum            = true
-use_path_style               = true
+use_path_style              = true
+
+# B2のS3互換APIではTerraformの条件付きPUTによるlockfile動作を保証できないため、
+# use_lockfileは有効にしない。GitHub Actionsのconcurrencyと運用上の直列化で保護する。
