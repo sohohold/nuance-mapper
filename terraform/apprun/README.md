@@ -12,7 +12,10 @@ flowchart LR
     R --> A[AppRun 共用型]
     T --> A
     T <--> S[Backblaze B2<br/>Terraform state]
-    A --> U[公開URL]
+    D --> X[AppRun secret同期]
+    X --> A
+    A --> W[WebAccel<br/>固定URL]
+    W --> U[利用者]
 ```
 
 ## 特徴
@@ -24,7 +27,8 @@ flowchart LR
 - Backblaze B2のS3互換APIでのTerraform state共有
 - デプロイと削除の同時実行を防ぐconcurrency設定
 - 確認文字列を要求する削除ワークフロー
-- LLM APIキーとRedis認証情報の環境変数注入
+- LLM APIキーとRedis認証情報をAppRunのシークレット環境変数として注入
+- WebAccelの提供サブドメインを固定公開URLとして使用し、AppRun再作成時もオリジンを自動追従
 - `/api/health`が返す`revision`で、稼働中のインスタンスがどのビルドかを確認できる
 
 ## 作成されるリソース
@@ -32,6 +36,8 @@ flowchart LR
 | リソース | 内容 |
 | --- | --- |
 | `sakura_apprun_shared` | Next.jsコンテナを実行するAppRunアプリ |
+
+本番の固定入口は `https://jlzcioc5.user.webaccel.jp` です。WebAccelサイト自体はTerraformのdestroy対象に含めず、AppRunの公開URLが変わった場合はデプロイワークフローがオリジンFQDNだけを更新します。Next.jsの静的HTMLは長い`s-maxage`を返すため、デプロイ後はWebAccelの全キャッシュを削除して旧HTMLを残しません。
 
 コンテナイメージの保管先はDocker Hubで、Terraformの管理対象外です。Terraform state用のオブジェクトストレージバケットも管理対象外で、初回のみ手動で作成します。
 
@@ -97,6 +103,15 @@ stateを誤って上書きした場合に復旧できるよう、古いファイ
 | `UPSTASH_REDIS_REST_URL` | Redis RESTエンドポイント | 任意 |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis RESTトークン | 任意 |
 
+Repository variablesには次を登録します。
+
+| Variable | 値・用途 |
+| --- | --- |
+| `APPRUN_SECRET_VERSION` | 初期値`1`。LLM・RedisのSecretsをローテーションしたら増やす |
+| `WEBACCEL_SITE_ID` | `113801814895`。本番WebAccelサイトの追従更新に使用 |
+| `WEBACCEL_SUBDOMAIN` | `jlzcioc5.user.webaccel.jp` |
+| `WEBACCEL_URL` | `https://jlzcioc5.user.webaccel.jp` |
+
 Docker Hubの組織アカウントを使う場合は、名前空間がユーザー名と異なります。ワークフローの`TF_VAR_image_namespace`と`IMAGE`の組み立てを組織名に変更してください。
 
 ## GitHub Actionsからデプロイする
@@ -108,7 +123,7 @@ Docker Hubの組織アカウントを使う場合は、名前空間がユーザ�
 1. GitHubの「Actions」タブを開きます。
 2. `Deploy to Sakura AppRun`を選択します。
 3. `Run workflow`を開き、戻したいイメージのタグを入力して実行します。
-4. 完了後、Job Summaryに出力されたアプリURLへアクセスします。
+4. 完了後、Job Summaryに出力された固定WebAccel URLへアクセスします。
 
 **タグを指定するとビルドを行わず、Docker Hub上の既存イメージをそのまま配ります。** ビルドしてしまうと、チェックアウト中のソースを指定したタグへ上書きすることになり、戻したいイメージが失われるためです。タグを空欄にした場合のみ、コミットSHAをタグとしてビルドとpushを行います。
 
@@ -119,6 +134,12 @@ Docker Hubの組織アカウントを使う場合は、名前空間がユーザ�
 ```bash
 curl -sS "$(terraform output -raw app_url)/api/health"
 # => {"status":"ok","revision":"<コミットSHA>"}
+```
+
+利用者向けの確認は固定URLを使います。
+
+```bash
+curl -sS https://jlzcioc5.user.webaccel.jp/api/health
 ```
 
 `revision`がデプロイしたタグと一致しない場合、古いイメージが動いています。
@@ -142,6 +163,13 @@ export SAKURA_ACCESS_TOKEN="..."
 export SAKURA_ACCESS_TOKEN_SECRET="..."
 export AWS_ACCESS_KEY_ID="B2 Application Key ID"
 export AWS_SECRET_ACCESS_KEY="B2 Application Key"
+export TF_VAR_app_secret_version="1"
+export GEMINI_API_KEY="..."             # 任意
+export GROQ_API_KEY="..."               # 任意
+export CEREBRAS_API_KEY="..."           # 任意
+export OPENROUTER_API_KEY="..."         # 任意
+export UPSTASH_REDIS_REST_URL="..."      # 任意
+export UPSTASH_REDIS_REST_TOKEN="..."    # 任意
 ```
 
 ### 3. イメージをpushする
@@ -162,12 +190,20 @@ AppRunが受け付けるアーキテクチャは`linux/amd64`のみ、イメー�
 
 ```bash
 terraform init -backend-config=backend.hcl
+APP_NAME=nuance-mapper bash ../../.github/scripts/apprun-secrets.sh
 terraform plan -var="image_tag=$TAG"
 terraform apply -var="image_tag=$TAG"
+APP_NAME=nuance-mapper bash ../../.github/scripts/apprun-secrets.sh
 terraform output -raw app_url
 ```
 
+provider `v3.12.7`はAppRunの`components[].secret`にまだ対応していないため、公式APIを呼ぶスクリプトをapplyの前後で実行します。版番号とsecretキー集合が一致する通常デプロイではAPI更新を行わず、初回移行・新規作成・ローテーション時だけ新しいAppRunバージョンを作ります。
+
 ## トークンのローテーション
+
+LLM APIキーまたはUpstash認証情報を変更する場合は、GitHub Secretを更新してからRepository variable `APPRUN_SECRET_VERSION`を増やします。次の本番デプロイと各プレビュー更新で、AppRunのsecretへ新しい値が同期されます。通常の環境変数とは異なり、secretの値はAppRun APIレスポンスに返りません。
+
+### Docker Hub
 
 レジストリのトークンは`password_wo`属性で渡すため、値そのものはTerraform stateに保存されません。一方、Terraformは値を読み戻せないため、**変更時は`registry_password_version`を現在の値より大きくする**必要があります。同じ番号のまま新しいトークンを渡しても、Terraformは「変更なし」と判断して送信しません。
 
@@ -226,7 +262,7 @@ terraform state rm sakura_container_registry.main
 
 ## セキュリティとstate管理
 
-- レジストリの`password_wo`はwrite-onlyですが、AppRunの`env`へ渡すLLM APIキーなどはTerraform stateに保存されます。stateバケットの公開を避け、アクセス権を最小限にしてください。
+- レジストリの`password_wo`とAppRunのsecret値はAPIから読み戻せません。LLM APIキーとRedis認証情報はTerraformリソースから外しているため、現在のstateには保存されません。ただし移行前のB2オブジェクトバージョンには旧stateが残りうるため、バケットの公開を避け、Lifecycle Ruleとアクセス権を適切に設定してください。
 - `backend.hcl`、`terraform.tfvars`、認証情報をリポジトリへコミットしないでください。
 - コントロールパネルや`usacloud`からTerraform管理リソースを直接削除しないでください。
 - GitHub Actionsのデプロイと削除は同一のconcurrency groupで直列化されています。別経路でTerraformを実行する場合も同じstateへの同時操作を避けてください。

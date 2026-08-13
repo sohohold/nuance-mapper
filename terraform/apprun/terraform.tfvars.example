@@ -27,18 +27,11 @@ registry_password = "dckr_pat_..."
 # max_cpu               = "0.5"
 # max_memory            = "1Gi"
 # max_scale             = 2
+# AppRun secretのローテーション版。機密値自体はtfvarsへ書かず、
+# .github/scripts/apprun-secrets.shへ環境変数で渡す。
+# app_secret_version    = "1"
 
 # デプロイするイメージ。タグまたは digest を指定する。
 # タグは必ず一意にすること（同じタグを上書きしても新しいバージョンは作られない）。
 # image_tag = "a4eb065"
 # image_tag = "sha256:3d78fd00a7c78463a7128d23a869264d62a9192378033368fd2657ac4d4bae9d"
-
-# 任意: LLM プロバイダのAPIキー（未設定ならモックデータで動作）
-# gemini_api_key     = ""
-# groq_api_key       = ""
-# cerebras_api_key   = ""
-# openrouter_api_key = ""
-
-# 任意: Upstash Redis（永続キャッシュ）
-# upstash_redis_rest_url   = ""
-# upstash_redis_rest_token = ""

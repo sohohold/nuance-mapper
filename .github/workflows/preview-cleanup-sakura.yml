@@ -4,7 +4,7 @@ name: Destroy Preview on Sakura AppRun
 # 消し忘れはそのまま「次のPRでプレビューを作れない」に直結する。
 on:
   pull_request:
-    types: [closed, unlabeled]
+    types: [closed]
 
 permissions:
   contents: read
@@ -23,10 +23,6 @@ env:
 
 jobs:
   destroy:
-    # closed は無条件。unlabeled は preview ラベルが外れた時だけ。
-    if: >-
-      github.event.action == 'closed' ||
-      github.event.label.name == 'preview'
     runs-on: ubuntu-latest
     steps:
       # PRが閉じた後は refs/pull/N/merge を取得できないことがあるため、

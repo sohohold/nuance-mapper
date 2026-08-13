@@ -1,20 +1,11 @@
 locals {
-  # GitHub Secretsに未登録のキーは空文字で渡ってくる。空値の環境変数をAppRun APIに
-  # 送るとバリデーションで弾かれうるため、値があるものだけを送る。
-  # アプリ側も buildCandidates() が `if (apiKey)` で判定しており、
-  # 「空文字で存在する」と「キーが無い」は同じ扱いなので挙動は変わらない。
-  app_env_all = {
-    GEMINI_API_KEY           = var.gemini_api_key
-    GROQ_API_KEY             = var.groq_api_key
-    CEREBRAS_API_KEY         = var.cerebras_api_key
-    OPENROUTER_API_KEY       = var.openrouter_api_key
-    UPSTASH_REDIS_REST_URL   = var.upstash_redis_rest_url
-    UPSTASH_REDIS_REST_TOKEN = var.upstash_redis_rest_token
-  }
-
-  app_env = [
-    for k, v in local.app_env_all : { key = k, value = v } if v != ""
-  ]
+  # provider v3.12.7はAppRunのcomponents[].secretをまだ扱えない。APIキー等は
+  # deploy-sakura.ymlから公式APIで同期し、Terraformはローテーション検知用の
+  # 非機密な版番号だけを通常のenvとして管理する。
+  app_env = [{
+    key   = "APP_SECRET_VERSION"
+    value = var.app_secret_version
+  }]
 
   # digest指定(`sha256:...`)は `@`、タグ指定は `:` で連結する。
   image_ref = format(
