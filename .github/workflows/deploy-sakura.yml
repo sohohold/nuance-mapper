@@ -1,8 +1,12 @@
 name: Deploy to Sakura AppRun
 
-# 手動起動のみ。main への merge では自動デプロイしない
-# (実運用は Vercel、Sakura 側は費用を抑えるため使いたい時だけ起動する)
+# main への push (PRのmergeを含む) で自動デプロイする。
+# レジストリをDocker Hubへ移したことで常設リソースの課金が無くなり、AppRun自体も
+# min_scale=0 でアイドル時は課金されないため、常時追従させても費用が増えない。
+# 任意のタグをデプロイしたい場合や切り戻しのために手動起動も残す。
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:

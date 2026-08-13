@@ -6,7 +6,7 @@ Nuance MapperをDockerイメージとしてビルドし、Docker Hubとさくら
 
 ```mermaid
 flowchart LR
-    D[workflow_dispatch] --> B[Docker build]
+    D[main への push<br/>または手動実行] --> B[Docker build]
     B --> R[Docker Hub]
     D --> T[Terraform apply]
     R --> A[AppRun 共用型]
@@ -17,7 +17,7 @@ flowchart LR
 
 ## 特徴
 
-- GitHub Actionsの手動実行によるデプロイ
+- `main`へのpush（PRのmerge）で自動デプロイ。手動実行でのタグ指定・切り戻しも可能
 - コミットSHAまたは指定値を使ったイメージタグ管理
 - コンテナレジストリはDocker Hub（さくらのコンテナレジストリの月額が不要）
 - `min_scale = 0`によるアイドル時のスケールゼロ
@@ -99,12 +99,16 @@ Docker Hubの組織アカウントを使う場合は、名前空間がユーザ�
 
 ## GitHub Actionsからデプロイする
 
+`main`ブランチへのpush（PRのmergeを含む）で`Deploy to Sakura AppRun`が自動実行されます。イメージタグにはコミットSHAが使われます。
+
+タグを指定したい場合や、以前のイメージへ切り戻す場合は手動でも起動できます。
+
 1. GitHubの「Actions」タブを開きます。
 2. `Deploy to Sakura AppRun`を選択します。
 3. `Run workflow`を実行します。必要に応じてイメージタグを入力します。空欄ならコミットSHAが使われます。
 4. 完了後、Job Summaryに出力されたアプリURLへアクセスします。
 
-`main`ブランチへのpushでは自動デプロイされません。
+デプロイと削除は同じconcurrency groupで直列化されているため、連続してmergeした場合は順番に処理されます。
 
 デプロイ後、稼働中のビルドは次のように確認できます。
 
