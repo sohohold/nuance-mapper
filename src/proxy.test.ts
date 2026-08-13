@@ -6,6 +6,7 @@ const USER = "preview";
 const PASSWORD = "s3cret";
 
 function enableGate() {
+  vi.stubEnv("PREVIEW_AUTH_REQUIRED", "true");
   vi.stubEnv("PREVIEW_BASIC_AUTH_USER", USER);
   vi.stubEnv("PREVIEW_BASIC_AUTH_PASSWORD", PASSWORD);
 }
@@ -27,10 +28,31 @@ describe("proxy", () => {
     expect(response.headers.get("WWW-Authenticate")).toBeNull();
   });
 
-  it("stays open when only one half of the credentials is set", () => {
+  it("stays open outside previews when only one credential is set", () => {
     vi.stubEnv("PREVIEW_BASIC_AUTH_USER", USER);
     expect(proxy(request()).status).toBe(200);
   });
+
+  it.each([
+    ["neither credential", undefined, undefined],
+    ["only the username", USER, undefined],
+    ["only the password", undefined, PASSWORD],
+  ])(
+    "fails closed when preview protection requires %s",
+    (_, user, password) => {
+      vi.stubEnv("PREVIEW_AUTH_REQUIRED", "true");
+      if (user) vi.stubEnv("PREVIEW_BASIC_AUTH_USER", user);
+      if (password) vi.stubEnv("PREVIEW_BASIC_AUTH_PASSWORD", password);
+
+      const response = proxy(request());
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("WWW-Authenticate")).toBeNull();
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Retry-After")).toBe("10");
+      expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    },
+  );
 
   it("challenges an unauthenticated request once the gate is on", () => {
     enableGate();

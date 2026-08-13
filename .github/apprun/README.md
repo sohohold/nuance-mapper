@@ -31,7 +31,7 @@ Settings → Secrets and variables → Actions → Repository secrets に2つ追
 | `PREVIEW_BASIC_AUTH_USER` | 任意の文字列。**コロン `:` を含めないこと**（Basic認証はコロンでユーザー名とパスワードを区切るため） |
 | `PREVIEW_BASIC_AUTH_PASSWORD` | 十分に長いランダム文字列。`openssl rand -base64 24` などで生成する |
 
-**両方が揃っていないとワークフローはビルド前に停止します。** [`src/proxy.ts`](../../src/proxy.ts) は両方ある時だけ認証をかける実装なので、片方だけだとプレビューが公開状態で外に出ます。意図的に落としています。
+**両方が揃っていないとワークフローはビルド前に停止します。** 加えて、初期デプロイには非機密の `PREVIEW_AUTH_REQUIRED=true` を設定します。[`src/proxy.ts`](../../src/proxy.ts) はこのフラグがあるのに資格情報が揃っていない場合、リクエストを通さず503を返します。そのため、AppRun secretへのパスワード同期中や同期失敗時もプレビューは公開状態になりません。
 
 登録後は値を読み出せません。プレビューを開くときにブラウザの認証ダイアログへ入力するので、控えておいてください。
 
@@ -60,7 +60,7 @@ PRを作ると `nuance-mapper-pr-<PR番号>` というAppRunアプリが作ら�
 | イメージ参照 | digest（`@sha256:...`） | AppRunのバージョンは構成情報のスナップショットで、参照文字列が変わらないと新しいバージョンが作られない。digestなら取り違えが原理的に起きない |
 | デプロイ手段 | apprun-cli | PRごとのTerraform stateを作って壊す手間が要らない |
 | ビルドキャッシュ | `type=gha,mode=max` | レジストリキャッシュはDocker Hub無料枠の2GiBを圧迫する |
-| アクセス制限 | アプリ層のBasic認証 | AppRunにVercelのDeployment Protection相当の機能がない。パケットフィルタはGitHub ActionsランナーのIPが動的で使いにくい |
+| アクセス制限 | fail-closedなアプリ層のBasic認証 | AppRunにVercelのDeployment Protection相当の機能がない。パスワード同期前は503、同期後はBasic認証で保護する |
 
 デプロイ後に2つ検証しています。`/api/health` の `revision` が期待するコミットSHAと一致すること（古いイメージが動いていないか）と、`GET /` が401を返すこと（保護されているか）。どちらかが崩れていればワークフローを失敗させます。
 

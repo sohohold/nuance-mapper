@@ -6,9 +6,11 @@ import { type NextRequest, NextResponse } from "next/server";
  *
  * AppRun has no equivalent of Vercel's deployment protection, so the
  * per-pull-request environments are closed off in the application instead.
- * Both PREVIEW_BASIC_AUTH_USER and PREVIEW_BASIC_AUTH_PASSWORD have to be
- * present for the gate to engage; production sets neither and every request
- * passes straight through, so this file is inert outside previews.
+ * Preview deployments set PREVIEW_AUTH_REQUIRED before they are published.
+ * Until both credentials are present, requests fail closed with 503; this
+ * keeps a newly-created preview private while its password is being installed
+ * as an AppRun secret. Production sets neither the flag nor credentials, so
+ * this file is inert outside previews.
  *
  * `/api/health` is deliberately outside the matcher: AppRun's health check
  * carries no credentials, and a 401 there would keep the version from ever
@@ -17,6 +19,7 @@ import { type NextRequest, NextResponse } from "next/server";
 
 const WWW_AUTHENTICATE = 'Basic realm="Preview", charset="UTF-8"';
 const NO_INDEX = "noindex, nofollow";
+const NO_STORE = "no-store";
 
 function expectedCredentials(): string | null {
   const user = process.env.PREVIEW_BASIC_AUTH_USER;
@@ -48,7 +51,20 @@ function credentialsMatch(supplied: string, expected: string): boolean {
 
 export function proxy(request: NextRequest) {
   const expected = expectedCredentials();
-  if (!expected) return NextResponse.next();
+  if (!expected) {
+    if (process.env.PREVIEW_AUTH_REQUIRED !== "true") {
+      return NextResponse.next();
+    }
+
+    return new NextResponse("Preview authentication is not ready", {
+      status: 503,
+      headers: {
+        "Cache-Control": NO_STORE,
+        "Retry-After": "10",
+        "X-Robots-Tag": NO_INDEX,
+      },
+    });
+  }
 
   const supplied = decodeBasic(request.headers.get("authorization"));
   if (!supplied || !credentialsMatch(supplied, expected)) {
