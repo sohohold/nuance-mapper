@@ -112,39 +112,14 @@ variable "max_scale" {
   default     = 2
 }
 
-# ── LLM プロバイダのAPIキー（すべて任意。未設定ならアプリはモックデータを返す） ──
+# ── AppRunシークレット ──
 
-variable "gemini_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
-
-variable "groq_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
-
-variable "cerebras_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
-
-variable "openrouter_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
-
-variable "upstash_redis_rest_url" {
-  type    = string
-  default = ""
-}
-
-variable "upstash_redis_rest_token" {
-  type      = string
-  default   = ""
-  sensitive = true
+variable "app_secret_version" {
+  description = <<-EOT
+    AppRunのシークレット環境変数をローテーションするための版番号。
+    GitHub Actions variable APPRUN_SECRET_VERSION と同じ値を渡す。
+    LLM APIキーまたはUpstash認証情報を変更したら増やすこと。
+  EOT
+  type        = string
+  default     = "1"
 }

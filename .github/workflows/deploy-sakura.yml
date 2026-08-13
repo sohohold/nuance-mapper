@@ -80,6 +80,23 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: terraform init -backend-config=backend.hcl
 
+      # provider v3.12.7はcomponents[].secretに未対応。既存アプリではapplyより先に
+      # 移行することで、Terraformのrefreshが通常envから消えた機密値をstateへ反映する。
+      # アプリがまだ存在しない場合は安全にスキップし、apply後の同じ処理で設定する。
+      - name: Sync AppRun secrets before apply
+        env:
+          APP_NAME: nuance-mapper
+          APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+        run: bash .github/scripts/apprun-secrets.sh
+
       - name: Log in to Docker Hub
         if: steps.vars.outputs.build == 'true'
         env:
@@ -111,24 +128,93 @@ jobs:
           TF_VAR_image_namespace: ${{ secrets.DOCKERHUB_USERNAME }}
           TF_VAR_registry_username: ${{ secrets.DOCKERHUB_USERNAME }}
           TF_VAR_registry_password: ${{ secrets.DOCKERHUB_TOKEN }}
-          TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_cerebras_api_key: ${{ secrets.CEREBRAS_API_KEY }}
-          TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
-          TF_VAR_upstash_redis_rest_url: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          TF_VAR_upstash_redis_rest_token: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          TF_VAR_app_secret_version: ${{ vars.APPRUN_SECRET_VERSION }}
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
           terraform apply -auto-approve -var="image_tag=${IMAGE_TAG}"
 
+      # 新規作成時はpre-applyで対象が存在しないため、ここで初めてsecretを設定する。
+      # 既存アプリでは版番号とキー集合が一致し、API更新なしで終了する。
+      - name: Sync AppRun secrets after apply
+        env:
+          APP_NAME: nuance-mapper
+          APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+        run: bash .github/scripts/apprun-secrets.sh
+
       - name: Show app URL
+        id: app
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: |
+          app_url=$(terraform output -raw app_url)
+          origin_host=${app_url#https://}
+          if [ -z "$origin_host" ] || [ "$origin_host" = "$app_url" ]; then
+            echo "::error::Terraform output app_url is not an HTTPS URL: $app_url"
+            exit 1
+          fi
+          echo "url=$app_url" >> "$GITHUB_OUTPUT"
+          echo "origin_host=$origin_host" >> "$GITHUB_OUTPUT"
           echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
-          echo "$(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"
+          echo "AppRun origin: $app_url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Point production WebAccel at AppRun
+        env:
+          APP_ORIGIN_HOST: ${{ steps.app.outputs.origin_host }}
+          EXPECTED_REVISION: ${{ steps.vars.outputs.tag }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          WEBACCEL_SITE_ID: ${{ vars.WEBACCEL_SITE_ID }}
+          WEBACCEL_URL: ${{ vars.WEBACCEL_URL }}
+        run: |
+          set -euo pipefail
+          : "${WEBACCEL_SITE_ID:?WEBACCEL_SITE_ID repository variable is required}"
+          : "${WEBACCEL_URL:?WEBACCEL_URL repository variable is required}"
+          api_root="https://secure.sakura.ad.jp/cloud/zone/is1a/api/webaccel/1.0"
+          payload=$(jq -nc --arg origin "$APP_ORIGIN_HOST" '{Site: {
+            Name: "nuance-mapper-production",
+            OriginType: "0",
+            RequestProtocol: "1",
+            OriginProtocol: "https",
+            Origin: $origin,
+            HostHeader: "",
+            DefaultCacheTTL: -1,
+            VarySupport: "0",
+            NormalizeAE: "1"
+          }}')
+          curl --fail-with-body --silent --show-error \
+            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+            --header "Content-Type: application/json" \
+            --request PUT --data "$payload" \
+            "$api_root/site/$WEBACCEL_SITE_ID" >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+            --header "Content-Type: application/json" \
+            --request PUT --data '{"Site":{"Status":"enabled"}}' \
+            "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+
+          revision=""
+          for attempt in $(seq 1 60); do
+            body=$(curl --fail --silent --show-error --max-time 60 \
+              "$WEBACCEL_URL/api/health" || true)
+            revision=$(jq -r '.revision // empty' <<<"$body" 2>/dev/null || true)
+            [ "$revision" = "$EXPECTED_REVISION" ] && break
+            sleep 5
+          done
+          if [ "$revision" != "$EXPECTED_REVISION" ]; then
+            echo "::error::WebAccel revision mismatch (expected=$EXPECTED_REVISION actual=${revision:-none})"
+            exit 1
+          fi
+          echo "Public URL: $WEBACCEL_URL" >> "$GITHUB_STEP_SUMMARY"
 
       # mainへのpushごとにSHAタグが増え続け、Docker Hub無料枠(private 2GiB)を
       # いずれ使い切る。新しい順にKEEP_TAGS件だけ残して残りを消す。
