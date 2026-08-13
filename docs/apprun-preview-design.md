@@ -80,13 +80,15 @@ fork からの PR では `GITHUB_TOKEN` が read-only になりコメントで�
 
 ## 5. プレビューを非公開にする
 
-AppRun には Vercel の Deployment Protection に相当する機能がない。**アプリ層で Basic 認証を実装する**のが現実的。
+AppRun には Vercel の Deployment Protection に相当する機能がない。**アプリ層で Basic 認証を実装する**のが現実的。**実装済み**（`src/proxy.ts`）。
 
-- Next.js の middleware で、環境変数 `PREVIEW_BASIC_AUTH_USER` / `PREVIEW_BASIC_AUTH_PASSWORD` が設定されている時だけ401を返す。本番はこの変数を入れないので素通り
-- 併せて `X-Robots-Tag: noindex` を返す
+- 環境変数 `PREVIEW_BASIC_AUTH_USER` / `PREVIEW_BASIC_AUTH_PASSWORD` が**両方**設定されている時だけ401を返す。本番はどちらも入れないので素通りする
+- 認証を通った応答には `X-Robots-Tag: noindex, nofollow` を付ける
 - パケットフィルタ（最大10 IP）は補助。GitHub Actions ランナーの egress IP は動的なので、CIからスモークテストを叩く構成とは相性が悪い
 
-**落とし穴**: AppRun のヘルスチェックは現状 `path = "/"` を叩いている。middleware が `/` に401を返すとヘルスチェックが通らずバージョンが起動しない。**`/api/health` を追加し、middleware の matcher から除外したうえで、probe のパスを本番・プレビュー両方で `/api/health` に変更する**。これは実装必須。
+**落とし穴（対処済み）**: AppRun のヘルスチェックは `path = "/"` を叩いていた。認証が `/` に401を返すとヘルスチェックが通らず、バージョンが健全と判定されない。`/api/health` を追加して matcher から除外し、probe のパスを本番・プレビュー両方で `/api/health` に変更した。`/` はページ全体をレンダリングするため、ヘルスチェック先としてもそもそも重い。
+
+**Next.js 16 の注意**: `middleware.ts` は非推奨になり `proxy.ts`（エクスポート名も `proxy`）へ改名された。proxy は Node.js ランタイム固定で edge を選べず、ルートセグメント設定（`export const runtime` 等）も書けない。Node ランタイムなので `node:crypto` の `timingSafeEqual` がそのまま使える。
 
 ## 6. 本番稼働中にプレビューを削除できるか
 
@@ -127,7 +129,7 @@ AppRun には Vercel の Deployment Protection に相当する機能がない。
 ## 9. 実装順序
 
 1. Docker Hub をデプロイソースにできるか手動で確認（`server` の値の特定）
-2. `/api/health` 追加 + middleware（Basic認証）+ 本番 probe パスの変更
+2. ~~`/api/health` 追加 + 認証（`src/proxy.ts`）+ 本番 probe パスの変更~~ 完了
 3. 本番を Docker Hub に切り替え（`terraform/apprun`）
 4. `preview-sakura.yml`（ラベル起動、build → push → apprun-cli deploy → コメント/Deployments）
 5. `preview-cleanup-sakura.yml`（PR closed でアプリ・タグ削除）

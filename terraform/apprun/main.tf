@@ -62,9 +62,13 @@ resource "sakura_apprun_shared" "main" {
 
     env = local.app_env
 
+    # ヘルスチェックは `/` ではなく専用エンドポイントを叩く。`/` はページ全体を
+    # レンダリングするうえ、プレビュー環境で有効になるBasic認証(src/proxy.ts)が
+    # 401を返すため、AppRunがインスタンスを不健全とみなしてしまう。
+    # /api/health は認証の matcher から除外してある。
     probe = {
       http_get = {
-        path = "/"
+        path = "/api/health"
         port = 3000
       }
     }
