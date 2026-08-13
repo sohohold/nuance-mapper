@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "コンテナイメージのタグ（空の場合はコミットSHAを使用）"
+        description: "デプロイ済みイメージのタグ。指定するとビルドせずそのイメージを配る（切り戻し用）。空ならコミットSHAでビルドする"
         required: false
         type: string
 
@@ -40,7 +40,16 @@ jobs:
         # env経由でシェル変数として渡す(シェルインジェクション対策)
         env:
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
-        run: echo "tag=${IMAGE_TAG_INPUT:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "$IMAGE_TAG_INPUT" ]; then
+            # 既存タグの指定は切り戻し。ここでビルドすると、チェックアウト中の
+            # ソースを指定タグへ上書きしてしまい、戻したいイメージが失われる。
+            echo "tag=$IMAGE_TAG_INPUT"
+            echo "build=false"
+          else
+            echo "tag=$GITHUB_SHA"
+            echo "build=true"
+          fi >> "$GITHUB_OUTPUT"
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -72,6 +81,7 @@ jobs:
         run: terraform init -backend-config=backend.hcl
 
       - name: Log in to Docker Hub
+        if: steps.vars.outputs.build == 'true'
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -80,6 +90,7 @@ jobs:
             -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Build and push image
+        if: steps.vars.outputs.build == 'true'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
