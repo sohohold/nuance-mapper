@@ -15,10 +15,22 @@ variable "app_name" {
 # からのデプロイに対応している（マニュアル「技術概要」の コンポーネント制限 を参照）。
 # レジストリの月額を避けるため Docker Hub を使う。
 
-variable "image_registry_server" {
-  description = "コンテナレジストリのホスト名。Docker Hubは `docker.io` のみ受け付ける（`index.docker.io` などはコントロールパネルのバリデーションで弾かれる）"
+variable "image_registry_host" {
+  description = "イメージ参照のプレフィックス。Docker Hubは `docker.io`"
   type        = string
   default     = "docker.io"
+}
+
+variable "image_registry_server" {
+  description = <<-EOT
+    AppRunがレジストリ認証に使うホスト名。イメージ参照のプレフィックスとは別物。
+
+    Docker Hubでは `index.docker.io` を指定する。コントロールパネルから設定した
+    正常動作中のアプリがこの値を保持しており、`docker.io` を送ると
+    APIが 400 Validation Error を返す。イメージ参照側は `docker.io/...` のままでよい。
+  EOT
+  type        = string
+  default     = "index.docker.io"
 }
 
 variable "image_namespace" {
