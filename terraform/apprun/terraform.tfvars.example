@@ -17,7 +17,11 @@ registry_password = "dckr_pat_..."
 # registry_password_version = 3
 
 # 任意
-# image_registry_server = "docker.io"
+# イメージ参照のプレフィックスと、AppRunが認証に使うホスト名は別物。
+# Docker Hubではそれぞれ docker.io と index.docker.io で、
+# server に docker.io を送るとAPIが400 Validation Errorを返す。
+# image_registry_host   = "docker.io"
+# image_registry_server = "index.docker.io"
 # image_repository      = "nuance-mapper"
 # zone                  = "is1b"
 # max_cpu               = "0.5"

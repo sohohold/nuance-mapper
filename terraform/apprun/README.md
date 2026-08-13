@@ -191,6 +191,8 @@ GitHub Actionsでは`DOCKERHUB_TOKEN`を更新したうえで、[`variables.tf`]
 2. `Run workflow`を開き、確認欄へ`destroy`と入力します。
 3. ワークフローを実行します。
 
+ただし本番アプリには`prevent_destroy`を設定しているため、**このワークフローは現状そのままでは失敗します。** 意図的に削除する場合は、先に[`main.tf`](./main.tf)の`lifecycle`ブロックを外す変更を`main`へ入れてください。確認欄の入力だけで本番が消えないようにするための、意図的な二段構えです。
+
 ### ローカル
 
 本番アプリには`prevent_destroy`を設定しているため、まず[`main.tf`](./main.tf)の`lifecycle`ブロックを削除してください。
