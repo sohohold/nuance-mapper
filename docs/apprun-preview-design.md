@@ -131,10 +131,42 @@ AppRun には Vercel の Deployment Protection に相当する機能がない。
 1. ~~Docker Hub をデプロイソースにできるか手動で確認（`server` の値の特定）~~ 完了
 2. ~~`/api/health` 追加 + 認証（`src/proxy.ts`）+ 本番 probe パスの変更~~ 完了
 3. ~~本番を Docker Hub に切り替え（`terraform/apprun`）~~ 完了（未適用。適用時の注意は [apprun/README.md](../terraform/apprun/README.md) の「さくらのコンテナレジストリからの移行」を参照）
-4. `preview-sakura.yml`（ラベル起動、build → push → apprun-cli deploy → コメント/Deployments）
-5. `preview-cleanup-sakura.yml`（PR closed でアプリ・タグ削除）
+4. ~~`preview-sakura.yml`（ラベル起動、build → push → apprun-cli deploy → コメント/Deployments）~~ 完了
+5. ~~`preview-cleanup-sakura.yml`（PR closed でアプリ・タグ削除）~~ 完了
 6. 週次棚卸し cron
 7. README / 記事用の計測メモ
+
+## 11. プレビュー環境の使い方
+
+### 必要な準備
+
+- リポジトリに `preview` ラベルを作る
+- Secrets に `PREVIEW_BASIC_AUTH_USER` と `PREVIEW_BASIC_AUTH_PASSWORD` を追加する。**両方揃っていないとワークフローが失敗する。** 未設定のまま動かすとプレビューが公開状態になるため、意図的に落としている
+- 本番デプロイと同じ `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `SAKURA_ACCESS_TOKEN` / `SAKURA_ACCESS_TOKEN_SECRET` を使う
+
+### 流れ
+
+PRに `preview` ラベルを付けると `nuance-mapper-pr-<N>` というAppRunアプリが作られる。以降そのPRへpushするたびに更新され、PRを閉じるかラベルを外すと削除される。
+
+結果はPRに1つのコメントとして書かれ、pushのたびに上書きされる（増えない）。同時に Deployments API へ登録するので、PRのタイムラインにも環境へのリンクが出る。GitHub App もbotも要らない。
+
+### 設計上の選択
+
+| 項目 | 選択 | 理由 |
+| --- | --- | --- |
+| 単位 | PRごとに独立したAppRunアプリ | 公開URLはアプリ単位でしか発行されず、バージョン別URLが存在しないため |
+| 起動条件 | `preview` ラベルによるオプトイン | アプリ数上限5（本番1＋プレビュー4）を人手で制御する |
+| イメージ参照 | **digest** | 構成情報が変わらないとバージョンが作られない仕様上、digestなら取り違えが原理的に起きない |
+| デプロイ手段 | apprun-cli | PRごとのTerraform stateの生成・破棄が要らない。本番はTerraformのまま |
+| ビルドキャッシュ | `type=gha,mode=max` | registryキャッシュはDocker Hub無料枠の2GiBを食う |
+| アクセス制限 | アプリ層のBasic認証 | AppRunにDeployment Protection相当が無い。パケットフィルタはランナーIPが動的で使いにくい |
+| 検証 | `/api/health` の `revision` 照合 ＋ `GET /` が401であること | 「古いイメージが動いている」「保護されていない」を自動で検出する |
+
+### 枠が埋まったとき
+
+新規プレビューを作ろうとして4本埋まっている場合、ワークフローはエラーで停止する。他のPRのプレビューを勝手に消す実装にはしていない。ラベルを外すかPRを閉じて枠を空ける。
+
+削除は取りこぼしうるので、週次の棚卸し（実装順序6）は別途必要。
 
 ## 10. 検証ログ
 

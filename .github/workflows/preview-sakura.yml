@@ -1,0 +1,244 @@
+name: Deploy Preview to Sakura AppRun
+
+# `preview` ラベルの付いたPRだけプレビュー環境を作る。
+# 全PRで自動作成しないのは、AppRunのアプリ数上限がプロジェクトあたり5だから。
+# 本番が1つ使うので、同時に持てるプレビューは最大4本になる。
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+# PRごとに直列化する。新しいpushが来たら古いビルドは打ち切ってよい。
+# 削除ワークフローも同じgroupを使い、作成中のアプリを消さないようにしている。
+concurrency:
+  group: sakura-apprun-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # プロジェクト上限5 − 本番1。これを超えると新規プレビューは作れない。
+  MAX_PREVIEW_APPS: "4"
+  PREVIEW_APP_PREFIX: nuance-mapper-pr-
+  IMAGE_REPO: nuance-mapper
+
+jobs:
+  preview:
+    # preview ラベルが付いていることが条件。ただし labeled イベントについては
+    # 付いたラベルが preview の時だけ動かす（無関係なラベル操作で再デプロイしない）。
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'preview') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'preview')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # マージ結果ではなくPRのHEADそのものをビルドする。
+          # /api/health が返す revision をこのSHAと突き合わせて検証するため、
+          # ビルド対象とSHAが一致している必要がある。
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Resolve names
+        id: names
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          REVISION="${HEAD_SHA:0:7}"
+          {
+            echo "app_name=${PREVIEW_APP_PREFIX}${PR_NUMBER}"
+            echo "revision=${REVISION}"
+            echo "tag=pr-${PR_NUMBER}-${REVISION}"
+          } >> "$GITHUB_OUTPUT"
+
+      # 認証情報が無いままデプロイすると、プレビューが公開状態で外に出てしまう。
+      # src/proxy.ts は両方が揃っている時だけ認証をかける実装なので、ここで止める。
+      - name: Require preview credentials
+        env:
+          PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
+          PREVIEW_BASIC_AUTH_USER: ${{ secrets.PREVIEW_BASIC_AUTH_USER }}
+        run: |
+          if [ -z "$PREVIEW_BASIC_AUTH_USER" ] || [ -z "$PREVIEW_BASIC_AUTH_PASSWORD" ]; then
+            echo "::error::PREVIEW_BASIC_AUTH_USER と PREVIEW_BASIC_AUTH_PASSWORD を Secrets に登録してください。未設定のままではプレビューが公開されます。"
+            exit 1
+          fi
+
+      # version を省略すると最新が入る。挙動を固定したくなったらここを固定する。
+      - uses: fujiwara/apprun-cli@v0
+
+      - name: Check preview capacity
+        env:
+          APP_NAME: ${{ steps.names.outputs.app_name }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+        run: |
+          # list は1行1オブジェクトのJSONを流すので -s でまとめる
+          names=$(apprun-cli list | jq -s --arg p "$PREVIEW_APP_PREFIX" \
+            '[.[] | select(.name | startswith($p)) | .name]')
+          echo "既存のプレビュー: $names"
+
+          if echo "$names" | jq -e --arg n "$APP_NAME" 'index($n)' > /dev/null; then
+            echo "このPRのアプリは既にあるので更新する（枠は消費しない）"
+            exit 0
+          fi
+
+          count=$(echo "$names" | jq 'length')
+          if [ "$count" -ge "$MAX_PREVIEW_APPS" ]; then
+            echo "::error::プレビュー環境の空きがありません（${count}/${MAX_PREVIEW_APPS}）。AppRunのアプリ数上限はプロジェクトあたり5で、本番が1つ使っています。他のPRから preview ラベルを外すか、PRを閉じて枠を空けてください。"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          build-args: BUILD_REVISION=${{ steps.names.outputs.revision }}
+          # レジストリキャッシュはDocker Hub無料枠の2GiBを圧迫するので使わない。
+          # GitHub Actions Cache はリポジトリあたり10GBで、mode=max により
+          # deps/builder 段まで再利用できる。
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPO }}:${{ steps.names.outputs.tag }}
+
+      - name: Deploy to AppRun
+        id: deploy
+        env:
+          APPRUN_CLI_APP: .github/apprun/preview.jsonnet
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PREVIEW_APP_NAME: ${{ steps.names.outputs.app_name }}
+          PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
+          PREVIEW_BASIC_AUTH_USER: ${{ secrets.PREVIEW_BASIC_AUTH_USER }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+        run: |
+          export PREVIEW_IMAGE="docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO}@${IMAGE_DIGEST}"
+
+          # 空の環境変数はAppRunのバリデーションに弾かれうるので値のあるものだけ送る。
+          # 本番(terraform/apprun/main.tf の local.app_env)と同じ方針。
+          PREVIEW_ENV_JSON=$(jq -n -c '
+            [
+              {key: "PREVIEW_BASIC_AUTH_USER",     value: $ENV.PREVIEW_BASIC_AUTH_USER},
+              {key: "PREVIEW_BASIC_AUTH_PASSWORD", value: $ENV.PREVIEW_BASIC_AUTH_PASSWORD},
+              {key: "GEMINI_API_KEY",              value: $ENV.GEMINI_API_KEY},
+              {key: "GROQ_API_KEY",                value: $ENV.GROQ_API_KEY},
+              {key: "CEREBRAS_API_KEY",            value: $ENV.CEREBRAS_API_KEY},
+              {key: "OPENROUTER_API_KEY",          value: $ENV.OPENROUTER_API_KEY},
+              {key: "UPSTASH_REDIS_REST_URL",      value: $ENV.UPSTASH_REDIS_REST_URL},
+              {key: "UPSTASH_REDIS_REST_TOKEN",    value: $ENV.UPSTASH_REDIS_REST_TOKEN}
+            ] | map(select(.value != null and .value != ""))')
+          export PREVIEW_ENV_JSON
+
+          apprun-cli deploy
+          echo "url=$(apprun-cli url)" >> "$GITHUB_OUTPUT"
+          echo "image=$PREVIEW_IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the deployment
+        env:
+          EXPECTED_REVISION: ${{ steps.names.outputs.revision }}
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          # スケールゼロからの復帰に9秒前後かかるうえ、バージョンが健全と判定される
+          # までにも時間がある。1回のcurlで判断せず繰り返す。
+          for i in $(seq 1 30); do
+            body=$(curl -sS --max-time 60 "${URL}/api/health" || true)
+            revision=$(echo "$body" | jq -r '.revision // empty' 2>/dev/null || true)
+            [ -n "$revision" ] && break
+            sleep 10
+          done
+
+          if [ "$revision" != "$EXPECTED_REVISION" ]; then
+            echo "::error::稼働中のビルドが期待と違います（expected=${EXPECTED_REVISION} actual=${revision:-応答なし}）"
+            exit 1
+          fi
+
+          # 認証が実際に掛かっているか確認する。掛かっていなければ公開状態なので失敗させる。
+          gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/")
+          if [ "$gate" != "401" ]; then
+            echo "::error::プレビューが保護されていません（GET / が ${gate} を返しました。401であるべきです）"
+            exit 1
+          fi
+
+          echo "revision=${revision} / 認証あり" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report to the pull request
+        uses: actions/github-script@v8
+        env:
+          APP_NAME: ${{ steps.names.outputs.app_name }}
+          IMAGE: ${{ steps.deploy.outputs.image }}
+          REVISION: ${{ steps.names.outputs.revision }}
+          URL: ${{ steps.deploy.outputs.url }}
+        with:
+          script: |
+            const { APP_NAME, IMAGE, REVISION, URL } = process.env;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const deployment = await github.rest.repos.createDeployment({
+              owner, repo,
+              ref: context.payload.pull_request.head.sha,
+              environment: `preview-pr-${issue_number}`,
+              description: "Sakura AppRun preview",
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner, repo,
+              deployment_id: deployment.data.id,
+              state: "success",
+              environment_url: URL,
+              description: `revision ${REVISION}`,
+            });
+
+            // 同じコメントを上書きし続けるための目印。pushのたびに増やさない。
+            const marker = "<!-- sakura-apprun-preview -->";
+            const body = [
+              marker,
+              "### さくらのAppRun プレビュー環境",
+              "",
+              `| | |`,
+              `| --- | --- |`,
+              `| URL | ${URL} |`,
+              `| revision | \`${REVISION}\` |`,
+              `| アプリ名 | \`${APP_NAME}\` |`,
+              `| イメージ | \`${IMAGE}\` |`,
+              "",
+              "Basic認証で保護されています。認証情報はリポジトリのSecretsを参照してください。",
+              "",
+              `初回アクセスはスケールゼロからの復帰で10秒ほどかかります。この環境はPRを閉じるか \`preview\` ラベルを外すと削除されます。`,
+            ].join("\n");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }

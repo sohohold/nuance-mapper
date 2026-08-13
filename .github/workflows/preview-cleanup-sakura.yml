@@ -1,0 +1,129 @@
+name: Destroy Preview on Sakura AppRun
+
+# プレビュー環境を回収する。AppRunのアプリ数上限（プロジェクトあたり5）があるため、
+# 消し忘れはそのまま「次のPRでプレビューを作れない」に直結する。
+on:
+  pull_request:
+    types: [closed, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# 作成ワークフローと同じgroup。cancel-in-progress: false なので、デプロイ中に
+# PRが閉じられた場合は作成が終わってから削除が走る（作りかけを消さない）。
+concurrency:
+  group: sakura-apprun-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPO: nuance-mapper
+  PREVIEW_APP_PREFIX: nuance-mapper-pr-
+
+jobs:
+  destroy:
+    # closed は無条件。unlabeled は preview ラベルが外れた時だけ。
+    if: >-
+      github.event.action == 'closed' ||
+      github.event.label.name == 'preview'
+    runs-on: ubuntu-latest
+    steps:
+      # PRが閉じた後は refs/pull/N/merge を取得できないことがあるため、
+      # 既定のmergerefではなくベースブランチを取る。必要なのは
+      # .github/apprun/preview.jsonnet だけで、これはmain上にある。
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Resolve names
+        id: names
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "app_name=${PREVIEW_APP_PREFIX}${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - uses: fujiwara/apprun-cli@v0
+
+      - name: Delete the AppRun application
+        id: delete
+        env:
+          APPRUN_CLI_APP: .github/apprun/preview.jsonnet
+          # 削除にもアプリ定義ファイルが要る。定義は must_env で値を要求するが、
+          # 削除に使うのは name だけなので、それ以外はダミーで足りる。
+          DOCKERHUB_TOKEN: unused
+          DOCKERHUB_USERNAME: unused
+          PREVIEW_APP_NAME: ${{ steps.names.outputs.app_name }}
+          PREVIEW_ENV_JSON: "[]"
+          PREVIEW_IMAGE: docker.io/unused/unused:unused
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+        run: |
+          # 存在しないアプリに delete をかけるとエラーになるので先に確認する
+          if ! apprun-cli list | jq -se --arg n "$PREVIEW_APP_NAME" \
+            'any(.[]; .name == $n)' > /dev/null; then
+            echo "アプリ ${PREVIEW_APP_NAME} は存在しない。何もしない"
+            echo "deleted=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          apprun-cli delete --force
+          echo "deleted=true" >> "$GITHUB_OUTPUT"
+
+      # イメージを残すとDocker Hub無料枠(private 2GiB)がじわじわ埋まる。
+      # AppRunアプリの削除が成否どちらでもタグは掃除する。
+      - name: Delete the preview image tags
+        if: always()
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          jwt=$(curl -sS -X POST https://hub.docker.com/v2/users/login/ \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+              '{username: $u, password: $p}')" | jq -r '.token // empty')
+
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hubへのログインに失敗したのでタグを削除できません"
+            exit 0
+          fi
+
+          repo_url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
+          tags=$(curl -sS -H "Authorization: JWT ${jwt}" "${repo_url}/tags/?page_size=100" \
+            | jq -r --arg p "pr-${PR_NUMBER}-" '.results[]? | select(.name | startswith($p)) | .name')
+
+          if [ -z "$tags" ]; then
+            echo "削除対象のタグなし"
+            exit 0
+          fi
+
+          for tag in $tags; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: JWT ${jwt}" "${repo_url}/tags/${tag}/")
+            echo "delete ${tag} -> ${code}"
+          done
+
+      - name: Report to the pull request
+        if: steps.delete.outputs.deleted == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const marker = "<!-- sakura-apprun-preview -->";
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (!existing) return;
+
+            await github.rest.issues.updateComment({
+              owner, repo,
+              comment_id: existing.id,
+              body: [
+                marker,
+                "### さくらのAppRun プレビュー環境",
+                "",
+                "削除済みです。アプリ数の枠を1つ解放しました。",
+              ].join("\n"),
+            });
