@@ -206,7 +206,12 @@ jobs:
           fi
 
           repo="${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
-          stale=$(dockerhub_tags "$jwt" "$repo" \
+          if ! tags=$(dockerhub_tags "$jwt" "$repo"); then
+            echo "::warning::タグ一覧を取得できなかったので整理をスキップします"
+            exit 0
+          fi
+
+          stale=$(printf '%s' "$tags" \
             | jq -r --arg p "pr-${PR_NUMBER}-" --arg current "$CURRENT_TAG" '
               .[] | select(.name | startswith($p)) | .name | select(. != $current)')
 

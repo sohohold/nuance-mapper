@@ -70,9 +70,12 @@ jobs:
           echo "deleted=true" >> "$GITHUB_OUTPUT"
 
       # イメージを残すとDocker Hub無料枠(private 2GiB)がじわじわ埋まる。
-      # AppRunアプリの削除が成否どちらでもタグは掃除する。
+      #
+      # ただしアプリ削除が失敗したときは走らせない（既定の success() のまま）。
+      # アプリが残ったままタグを消すと、digest参照のイメージを引けなくなり、
+      # スケールゼロから復帰できないプレビューが残る。アプリが元々存在しない場合は
+      # 前のstepが正常終了するので、この掃除は実行される。
       - name: Delete the preview image tags
-        if: always()
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -87,7 +90,12 @@ jobs:
           fi
 
           repo="${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
-          tags=$(dockerhub_tags "$jwt" "$repo" \
+          if ! all=$(dockerhub_tags "$jwt" "$repo"); then
+            echo "::warning::タグ一覧を取得できなかったのでタグを削除できません"
+            exit 0
+          fi
+
+          tags=$(printf '%s' "$all" \
             | jq -r --arg p "pr-${PR_NUMBER}-" '.[] | select(.name | startswith($p)) | .name')
 
           if [ -z "$tags" ]; then

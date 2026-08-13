@@ -154,7 +154,12 @@ jobs:
 
           # プレビュー用の pr-* はプレビュー側のワークフローが管理するので触らない。
           # 今デプロイしたタグも、保持数の計算とは別に必ず除外する。
-          stale=$(dockerhub_tags "$jwt" "$repo" \
+          if ! tags=$(dockerhub_tags "$jwt" "$repo"); then
+            echo "::warning::タグ一覧を取得できなかったので整理をスキップします"
+            exit 0
+          fi
+
+          stale=$(printf '%s' "$tags" \
             | jq -r --arg keep "$KEEP_TAGS" --arg current "$IMAGE_TAG" '
               [.[] | select(.name | startswith("pr-") | not)]
               | sort_by(.last_updated) | reverse

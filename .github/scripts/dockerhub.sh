@@ -12,17 +12,28 @@ DOCKERHUB_API="https://hub.docker.com/v2"
 # 1ページ100件。応答が壊れて next が止まらない場合に備えて上限を設ける。
 DOCKERHUB_MAX_PAGES=20
 
-# JWTを標準出力へ。失敗時は空文字を返すので、呼び出し側で判定すること。
+# JWTを標準出力へ。失敗時は空文字を返す（呼び出し側で判定すること）。
+#
+# 呼び出し元のstepは errexit で動くため、ここで失敗を漏らすとstep全体が落ちる。
+# デプロイ済みの本番が「タグ整理に失敗した」だけで赤くなるのは筋が悪いので、
+# 通信断もJSONとして壊れた応答も、この関数の内側で空文字に畳む。
 dockerhub_login() {
-  curl -sS -X POST "${DOCKERHUB_API}/users/login/" \
+  local response token
+
+  response=$(curl -sS --max-time 30 -X POST "${DOCKERHUB_API}/users/login/" \
     -H 'Content-Type: application/json' \
     -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
-      '{username: $u, password: $p}')" \
-    | jq -r '.token // empty'
+      '{username: $u, password: $p}')") || return 0
+
+  token=$(printf '%s' "$response" | jq -r '.token // empty' 2>/dev/null) || return 0
+  printf '%s' "$token"
 }
 
 # 全ページのタグをJSON配列で標準出力へ。
 # 1ページ目だけを見て絞り込むと、対象が後続ページに残って取りこぼす。
+#
+# 途中で失敗した場合は、集まった分を返さずに非ゼロで戻る。不完全な一覧をもとに
+# 削除対象を決めると、消してはいけないタグを消しうるため。
 dockerhub_tags() {
   local jwt="$1" repo="$2"
   local next="${DOCKERHUB_API}/repositories/${repo}/tags/?page_size=100"
@@ -30,10 +41,13 @@ dockerhub_tags() {
 
   for ((i = 0; i < DOCKERHUB_MAX_PAGES; i++)); do
     [ -n "$next" ] || break
-    page=$(curl -sS -H "Authorization: JWT ${jwt}" "$next")
+
+    page=$(curl -sS --max-time 60 -H "Authorization: JWT ${jwt}" "$next") || return 1
+    printf '%s' "$page" | jq empty > /dev/null 2>&1 || return 1
+
     acc=$(jq -c -n --argjson acc "$acc" --argjson page "$page" \
-      '$acc + ($page.results // [])')
-    next=$(printf '%s' "$page" | jq -r '.next // empty')
+      '$acc + ($page.results // [])') || return 1
+    next=$(printf '%s' "$page" | jq -r '.next // empty') || return 1
   done
 
   printf '%s' "$acc"
