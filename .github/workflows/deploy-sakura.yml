@@ -191,11 +191,43 @@ jobs:
             VarySupport: "0",
             NormalizeAE: "1"
           }}')
-          curl --fail-with-body --silent --show-error \
+
+          # 有効中のサイトへ設定変更を送るとAPIは412を返す。通常のデプロイでは
+          # AppRunアプリID（＝オリジンFQDN）は変わらないため、まず現値を比較し、
+          # 同じなら設定変更自体を省略する。再作成でFQDNが変わった場合だけ一時的に
+          # 無効化して更新する。更新失敗時も旧設定を再有効化するようtrapを置く。
+          site=$(curl --fail-with-body --silent --show-error \
             --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
-            --header "Content-Type: application/json" \
-            --request PUT --data "$payload" \
-            "$api_root/site/$WEBACCEL_SITE_ID" >/dev/null
+            "$api_root/site/$WEBACCEL_SITE_ID")
+          current_origin=$(jq -r '.Site.Origin // empty' <<<"$site")
+          if [ "$current_origin" != "$APP_ORIGIN_HOST" ]; then
+            enable_site() {
+              curl --fail-with-body --silent --show-error \
+                --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+                --header "Content-Type: application/json" \
+                --request PUT --data '{"Site":{"Status":"enabled"}}' \
+                "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null || true
+            }
+
+            curl --fail-with-body --silent --show-error \
+              --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+              --header "Content-Type: application/json" \
+              --request PUT --data '{"Site":{"Status":"disabled"}}' \
+              "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+            trap enable_site EXIT
+
+            curl --fail-with-body --silent --show-error \
+              --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+              --header "Content-Type: application/json" \
+              --request PUT --data "$payload" \
+              "$api_root/site/$WEBACCEL_SITE_ID" >/dev/null
+            enable_site
+            trap - EXIT
+          else
+            echo "WebAccel origin is already current: $current_origin"
+          fi
+
+          # 同じオリジンで設定変更を省略した場合も、サイトが有効であることを保証する。
           curl --fail-with-body --silent --show-error \
             --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
             --header "Content-Type: application/json" \
