@@ -187,6 +187,9 @@ jobs:
           export PREVIEW_ENV_JSON
 
           apprun-cli deploy
+          # URL取得など、この後の処理が失敗してもcleanup対象だと判別できるよう、
+          # AppRunへの反映が完了した時点で出力する。
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
           # `echo "url=$(apprun-cli url)"` と書くと、URL取得が失敗しても echo が
           # 成功するため空のURLがそのまま後続へ流れ、検証ステップが的外れな
@@ -216,6 +219,7 @@ jobs:
         run: bash .github/scripts/apprun-secrets.sh
 
       - name: Verify the deployment
+        id: verify
         env:
           EXPECTED_REVISION: ${{ steps.names.outputs.revision }}
           URL: ${{ steps.deploy.outputs.url }}
@@ -229,6 +233,20 @@ jobs:
           # リビジョンが出るまで待つ。
           revision=""
           for i in $(seq 1 30); do
+            # PRのコードは認証用proxy自体を変更できる。期待revisionを待ってから
+            # 認証を調べると、その間に無保護の版を公開し続けるため、各試行で先に
+            # 外側から確認する。401は同期済み、503はfail-closed中なので安全。
+            if gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/"); then
+              case "$gate" in
+                401|503) ;;
+                502|504) ;; # AppRunの切り替え中は一時的に返り得るので再試行する
+                *)
+                  echo "::error::プレビューが保護されていません（GET / が ${gate} を返しました）"
+                  exit 1
+                  ;;
+              esac
+            fi
+
             body=$(curl -sS --max-time 60 "${URL}/api/health" || true)
             revision=$(echo "$body" | jq -r '.revision // empty' 2>/dev/null || true)
             [ "$revision" = "$EXPECTED_REVISION" ] && break
@@ -252,6 +270,30 @@ jobs:
           fi
 
           echo "revision=${revision} / 認証あり" >> "$GITHUB_STEP_SUMMARY"
+
+      # PR内のproxyは検証対象であって信頼境界にはできない。デプロイ後のsecret同期や
+      # 401検証が失敗した場合、workflowを失敗させるだけでは無保護のアプリが残る。
+      # 検証の直後にアプリごと退役させ、secret-backed APIを公開し続けないようにする。
+      - name: Retire a preview that was not verified
+        if: >-
+          always() &&
+          steps.deploy.outputs.published == 'true' &&
+          steps.verify.outcome != 'success'
+        env:
+          PREVIEW_APP_NAME: ${{ steps.names.outputs.app_name }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+        run: |
+          echo "::warning::デプロイ後の処理に失敗したため、公開済みプレビューを削除します"
+
+          # checkoutしたPR内の定義には依存しない。deleteが読むのはnameだけなので、
+          # workflow側で最小の定義を作り、PRがpreview.jsonnetを変更・削除していても
+          # cleanupを実行できるようにする。
+          cleanup_config="${RUNNER_TEMP}/apprun-preview-cleanup.jsonnet"
+          printf '{ name: "%s" }\n' "$PREVIEW_APP_NAME" > "$cleanup_config"
+          export APPRUN_CLI_APP="$cleanup_config"
+
+          apprun-cli delete --force
 
       # pushのたびに pr-<番号>-<リビジョン> が増える。PRを閉じるまで放置すると、
       # 長寿命のPRだけでDocker Hub無料枠(private 2GiB)を圧迫しうる。
