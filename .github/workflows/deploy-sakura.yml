@@ -200,6 +200,7 @@ jobs:
             --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
             "$api_root/site/$WEBACCEL_SITE_ID")
           current_origin=$(jq -r '.Site.Origin // empty' <<<"$site")
+          current_status=$(jq -r '.Site.Status // empty' <<<"$site")
           if [ "$current_origin" != "$APP_ORIGIN_HOST" ]; then
             enable_site() {
               curl --fail-with-body --silent --show-error \
@@ -223,16 +224,19 @@ jobs:
               "$api_root/site/$WEBACCEL_SITE_ID" >/dev/null
             enable_site
             trap - EXIT
+            current_status="enabled"
           else
             echo "WebAccel origin is already current: $current_origin"
           fi
 
-          # 同じオリジンで設定変更を省略した場合も、サイトが有効であることを保証する。
-          curl --fail-with-body --silent --show-error \
-            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
-            --header "Content-Type: application/json" \
-            --request PUT --data '{"Site":{"Status":"enabled"}}' \
-            "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+          # ステータスAPIも同値更新には412を返すため、無効なときだけ有効化する。
+          if [ "$current_status" != "enabled" ]; then
+            curl --fail-with-body --silent --show-error \
+              --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+              --header "Content-Type: application/json" \
+              --request PUT --data '{"Site":{"Status":"enabled"}}' \
+              "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+          fi
 
           revision=""
           for attempt in $(seq 1 60); do
