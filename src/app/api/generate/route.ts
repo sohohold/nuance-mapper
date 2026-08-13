@@ -174,7 +174,10 @@ function createSSEStream(
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      // Web accelerators may store `no-cache` responses and revalidate them.
+      // SSE must never be stored or replayed; each POST represents one live
+      // generation and its chunks need to reach the browser immediately.
+      "Cache-Control": "no-store",
       Connection: "keep-alive",
     },
   });

@@ -5,6 +5,7 @@ describe("GET /api/health", () => {
   it("answers 200 so AppRun's probe can mark the version healthy", async () => {
     const response = GET();
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     await expect(response.json()).resolves.toMatchObject({ status: "ok" });
   });
 

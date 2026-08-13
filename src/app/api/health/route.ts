@@ -18,8 +18,15 @@ export function GET() {
   // only way to tell which image an AppRun version is running is to look for
   // a behavioural difference, which is a slow way to discover that a reused
   // tag resolved to an older digest.
-  return NextResponse.json({
-    status: "ok",
-    revision: process.env.BUILD_REVISION || null,
-  });
+  return NextResponse.json(
+    {
+      status: "ok",
+      revision: process.env.BUILD_REVISION || null,
+    },
+    {
+      // This endpoint verifies which AppRun image is live. A CDN-cached
+      // response could make a completed deployment look stale (or vice versa).
+      headers: { "Cache-Control": "no-store" },
+    },
+  );
 }
