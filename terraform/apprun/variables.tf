@@ -15,10 +15,31 @@ variable "app_name" {
 # からのデプロイに対応している（マニュアル「技術概要」の コンポーネント制限 を参照）。
 # レジストリの月額を避けるため Docker Hub を使う。
 
-variable "image_registry_server" {
-  description = "コンテナレジストリのホスト名。Docker Hubは `docker.io` のみ受け付ける（`index.docker.io` などはコントロールパネルのバリデーションで弾かれる）"
+variable "image_registry_host" {
+  description = "イメージ参照のプレフィックス。Docker Hubは `docker.io`"
   type        = string
   default     = "docker.io"
+}
+
+variable "image_registry_server" {
+  description = <<-EOT
+    AppRunがレジストリ認証に使うホスト名。イメージ参照のプレフィックスとは別物。
+
+    Docker Hubでは `index.docker.io` を指定する。コントロールパネルから設定した
+    正常動作中のアプリがこの値を保持しており、`docker.io` を送ると
+    APIが 400 Validation Error を返す。イメージ参照側は `docker.io/...` のままでよい。
+  EOT
+  type        = string
+  default     = "index.docker.io"
+
+  # この変数は以前イメージ参照のプレフィックスを兼ねており、`docker.io` が正しい値
+  # としてREADMEとtfvars.exampleに載っていた。名前は同じまま意味だけが変わったので、
+  # gitignoreされた terraform.tfvars に古い値が残っていると、デフォルトを上書きして
+  # 本番を止めたのと同じ400を静かに再現する。planの時点で止める。
+  validation {
+    condition     = var.image_registry_server != "docker.io"
+    error_message = "image_registry_server はAppRunがレジストリ認証に使うホスト名で、Docker Hubでは index.docker.io を指定する。docker.io を送るとAPIが400 Validation Errorを返す。イメージ参照のプレフィックスを変えたい場合は image_registry_host を使うこと。"
+  }
 }
 
 variable "image_namespace" {

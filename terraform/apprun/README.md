@@ -72,7 +72,9 @@ stateを誤って上書きした場合に復旧できるよう、古いファイ
 
 無料のPersonalプランでは、privateリポジトリは1つ・2GiBまでです。本番のSHAタグはデプロイのたびに増えるため、デプロイワークフローの最後で新しい順に10件だけ残して自動削除します（保持数は`KEEP_TAGS`）。プレビュー用の`pr-`で始まるタグはプレビュー側のワークフローが管理するので対象外です。
 
-イメージの参照は`docker.io/<ユーザー名>/nuance-mapper:<タグ>`の形式です。AppRunがレジストリのホスト名として受け付けるのは`docker.io`のみで、`index.docker.io`などは弾かれます。プレフィックスの省略もできません。
+イメージの参照は`docker.io/<ユーザー名>/nuance-mapper:<タグ>`の形式です。プレフィックスの省略はできません。
+
+**認証に使うホスト名（`server`）はイメージ参照のプレフィックスとは別物で、Docker Hubでは`index.docker.io`です。** コントロールパネルの入力欄は`docker.io`しか受け付けませんが、保存される値は`index.docker.io`で、APIに`docker.io`を送ると400 Validation Errorになります。`image_registry_host`（`docker.io`）と`image_registry_server`（`index.docker.io`）を分けているのはこのためです。
 
 ### 3. GitHub Secretsを登録する
 
@@ -189,7 +191,11 @@ GitHub Actionsでは`DOCKERHUB_TOKEN`を更新したうえで、[`variables.tf`]
 2. `Run workflow`を開き、確認欄へ`destroy`と入力します。
 3. ワークフローを実行します。
 
+ただし本番アプリには`prevent_destroy`を設定しているため、**このワークフローは現状そのままでは失敗します。** 意図的に削除する場合は、先に[`main.tf`](./main.tf)の`lifecycle`ブロックを外す変更を`main`へ入れてください。確認欄の入力だけで本番が消えないようにするための、意図的な二段構えです。
+
 ### ローカル
+
+本番アプリには`prevent_destroy`を設定しているため、まず[`main.tf`](./main.tf)の`lifecycle`ブロックを削除してください。
 
 ```bash
 terraform plan -destroy
@@ -209,6 +215,14 @@ terraform state rm sakura_container_registry.main
 ```
 
 これでリソースはstateから消えますが、さくら側には残ります。以後はコントロールパネルから手動で管理・削除することになります。
+
+## 本番アプリの置換について
+
+`sakura_apprun_shared.main`には`prevent_destroy`を設定してあります。置換（削除して再作成）は**公開URLが変わる**うえ、`main`へのmergeで無人のapplyが走る構成では、置換が必要になったことに誰も気付けないまま本番が消えます。
+
+実際にこれが起きました。コントロールパネルからイメージを差し替えた際にコンポーネント名が`nuance-mapper:<タグ>`に書き換わり、それを差分と見たTerraformがアプリを破棄しました。`prevent_destroy`があれば、applyはplanの段階でエラーになって止まります。
+
+**コントロールパネルからの編集は、Terraformが管理する属性を書き換えて置換を誘発します。** 緊急時以外は使わず、使った場合は次のapplyのplanを必ず目視してください。
 
 ## セキュリティとstate管理
 

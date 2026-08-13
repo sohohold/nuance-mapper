@@ -1,6 +1,10 @@
 name: Destroy Sakura AppRun
 
 # 手動起動のみ。誤爆防止のため confirm 入力に "destroy" と打たないと実行されない
+#
+# 本番アプリには prevent_destroy を設定してあるため、このワークフローはそのままでは
+# 失敗する。意図的に削除する場合は main.tf の lifecycle ブロックを外す変更を
+# main へ入れてから実行すること（terraform/apprun/README.md「リソースを削除する」）。
 on:
   workflow_dispatch:
     inputs:

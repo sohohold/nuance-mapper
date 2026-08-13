@@ -28,7 +28,10 @@ local name = must_env('PREVIEW_APP_NAME');
         // 参照文字列が変わらないと新しいバージョンが作られない。digestなら
         // 中身が変われば必ず文字列も変わるため、その失敗が原理的に起きない。
         image: must_env('PREVIEW_IMAGE'),
-        server: 'docker.io',
+        // 認証に使うホスト名はイメージ参照のプレフィックスとは別物。
+        // Docker Hubでは index.docker.io を指定する。docker.io を送ると
+        // APIが 400 Validation Error を返す（本番で実際に踏んだ）。
+        server: 'index.docker.io',
         username: must_env('DOCKERHUB_USERNAME'),
         password: must_env('DOCKERHUB_TOKEN'),
       },
