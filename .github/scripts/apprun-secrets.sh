@@ -127,12 +127,21 @@ payload=$(jq -c \
   }
 ' <<<"$application")
 
-updated=$(curl --fail-with-body --silent --show-error \
+response=$(curl --silent --show-error \
   --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
   --header "Content-Type: application/json" \
   --request PATCH \
   --data "$payload" \
+  --write-out $'\n%{http_code}' \
   "$APPRUN_API_ROOT/applications/$app_id")
+http_status=${response##*$'\n'}
+updated=${response%$'\n'*}
+if [[ ! "$http_status" =~ ^2 ]]; then
+  echo "AppRun secret update failed with HTTP $http_status:" >&2
+  # APIエラーだけを出す。リクエストpayload（secret値）は絶対に表示しない。
+  jq -c '.error // .' <<<"$updated" >&2 || echo "<non-JSON API error>" >&2
+  exit 1
+fi
 
 updated_version=$(jq -r '
   [.components[].env[]? | select(.key == "APP_SECRET_VERSION") | .value][0] // ""
