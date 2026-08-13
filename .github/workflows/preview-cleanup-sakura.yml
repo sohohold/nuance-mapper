@@ -42,7 +42,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: echo "app_name=${PREVIEW_APP_PREFIX}${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
+      # version は必須。省略するとダウンロードURLのバージョン部分が空になり、
+      # tar が「not in gzip format」で落ちる。
       - uses: fujiwara/apprun-cli@v0
+        with:
+          version: v0.8.1
 
       - name: Delete the AppRun application
         id: delete

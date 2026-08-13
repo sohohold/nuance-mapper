@@ -57,9 +57,18 @@ variable "registry_password" {
 }
 
 variable "registry_password_version" {
-  description = "registry_password を変更(ローテーション)するたびに増やすバージョン番号。write-only属性は値そのものではなくこの番号の変化で更新を検知するため、パスワードを変えたらここも必ず増やすこと"
+  description = <<-EOT
+    registry_password を変更(ローテーション)するたびに増やすバージョン番号。
+    write-only属性は値そのものではなくこの番号の変化で更新を検知するため、
+    パスワードを変えたらここも必ず増やすこと。
+
+    2 = さくらのコンテナレジストリからDocker Hubへの移行。レジストリを差し替えると
+    認証情報も別物になるが、この番号を1のままにしていたため、serverとusernameだけが
+    Docker Hubに変わり、パスワードは旧レジストリのものが残ったまま更新がかかり、
+    AppRunのAPIが400 Validation Errorを返した。
+  EOT
   type        = number
-  default     = 1
+  default     = 2
 }
 
 # ── AppRun ──

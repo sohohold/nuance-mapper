@@ -65,8 +65,11 @@ jobs:
             exit 1
           fi
 
-      # version を省略すると最新が入る。挙動を固定したくなったらここを固定する。
+      # version は必須。省略するとダウンロードURLのバージョン部分が空になり、
+      # tar が「not in gzip format」で落ちる（アクションのinputsは required: true）。
       - uses: fujiwara/apprun-cli@v0
+        with:
+          version: v0.8.1
 
       - name: Check preview capacity
         env:
