@@ -14,5 +14,12 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  return NextResponse.json({ status: "ok" });
+  // `revision` identifies the build that is actually serving. Without it the
+  // only way to tell which image an AppRun version is running is to look for
+  // a behavioural difference, which is a slow way to discover that a reused
+  // tag resolved to an older digest.
+  return NextResponse.json({
+    status: "ok",
+    revision: process.env.BUILD_REVISION || null,
+  });
 }

@@ -98,7 +98,9 @@ jobs:
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
           IMAGE="${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp/nuance-mapper:${IMAGE_TAG}"
-          docker build -t "$IMAGE" .
+          # BUILD_REVISION は /api/health が返す。稼働中のインスタンスが
+          # どのビルドかを外から確認できるようにするためのもの。
+          docker build --build-arg "BUILD_REVISION=${IMAGE_TAG}" -t "$IMAGE" .
           docker push "$IMAGE"
 
       - name: Terraform apply
