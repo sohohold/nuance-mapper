@@ -140,9 +140,32 @@ AppRun には Vercel の Deployment Protection に相当する機能がない。
 
 ### 必要な準備
 
-- リポジトリに `preview` ラベルを作る
-- Secrets に `PREVIEW_BASIC_AUTH_USER` と `PREVIEW_BASIC_AUTH_PASSWORD` を追加する。**両方揃っていないとワークフローが失敗する。** 未設定のまま動かすとプレビューが公開状態になるため、意図的に落としている
-- 本番デプロイと同じ `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `SAKURA_ACCESS_TOKEN` / `SAKURA_ACCESS_TOKEN_SECRET` を使う
+**1. `preview` ラベルを作る**
+
+リポジトリの Issues タブ → Labels → New label。名前は小文字で `preview` ちょうど。ワークフローはこの文字列と完全一致で判定するため、`Preview` や `preview-env` では起動しない。色と説明は任意。
+
+PRのサイドバーの Labels からその場で作ることもできる。
+
+**2. Basic認証の認証情報を Secrets に登録する**
+
+Settings → Secrets and variables → Actions → Repository secrets の New repository secret から2つ登録する。Environment secrets や Dependabot secrets ではない。
+
+| Secret | 値 |
+| --- | --- |
+| `PREVIEW_BASIC_AUTH_USER` | 任意の文字列。**コロン `:` を含めない**（Basic認証はコロンでユーザー名とパスワードを区切るため） |
+| `PREVIEW_BASIC_AUTH_PASSWORD` | 十分に長いランダム文字列。`openssl rand -base64 24` などで生成する |
+
+**両方が揃っていないとワークフローはビルド前に失敗する。** `src/proxy.ts` は両方ある時だけ認証をかける実装なので、片方だけだとプレビューが公開状態で外に出てしまう。意図的に落としている。
+
+登録した値は後から表示できないので、パスワードマネージャなどに控えておくこと。プレビューを開くときにブラウザのダイアログへ入力する。
+
+**3. 既存のSecretsを流用する**
+
+`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `SAKURA_ACCESS_TOKEN` / `SAKURA_ACCESS_TOKEN_SECRET` は本番デプロイと共通。LLMのAPIキーとUpstashの認証情報も、登録済みのものがあればプレビューにも渡される（未登録なら省かれ、アプリはモックデータを返す）。
+
+### forkからのPRでは動かない
+
+`pull_request` イベントではfork元のPRにSecretsが渡らないため、認証情報チェックで停止する。`pull_request_target` は任意コード実行につながるので使っていない。プレビューを使うのは同一リポジトリのブランチから出したPRに限られる。
 
 ### 流れ
 
