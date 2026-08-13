@@ -310,6 +310,7 @@ jobs:
               `| revision | \`${REVISION}\` |`,
               `| アプリ名 | \`${APP_NAME}\` |`,
               `| イメージ | \`${IMAGE}\` |`,
+              `| workflow | [run ${context.runId}](https://github.com/${owner}/${repo}/actions/runs/${context.runId}) |`,
               "",
               "Basic認証で保護されています。認証情報はリポジトリのSecretsを参照してください。",
               "",
