@@ -104,12 +104,13 @@ payload=$(jq -c \
         max_cpu: $component.max_cpu,
         max_memory: $component.max_memory,
         deploy_source: {
-          container_registry: (
-            $component.deploy_source.container_registry
-            | {image, server, username}
-            | with_entries(select(.value != null))
-            | . + {action: "keep"}
-          )
+          # action=keepでは保存済み資格情報を丸ごと再利用する。server/usernameを
+          # 同時に送ると、APIが「passwordなしの新規認証情報」と解釈して
+          # invalid Passwordを返すため、image以外は送らない。
+          container_registry: {
+            image: $component.deploy_source.container_registry.image,
+            action: "keep"
+          }
         },
         env: (
           (($component.env // [])
