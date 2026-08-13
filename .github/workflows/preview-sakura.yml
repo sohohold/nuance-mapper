@@ -141,6 +141,13 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
         run: |
+          # digestが空のまま進むと `...@` という参照でデプロイしようとして、
+          # 原因の分かりにくいエラーになる。
+          if [ -z "$IMAGE_DIGEST" ]; then
+            echo "::error::ビルドしたイメージのdigestを取得できませんでした"
+            exit 1
+          fi
+
           export PREVIEW_IMAGE="docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO}@${IMAGE_DIGEST}"
 
           # 空の環境変数はAppRunのバリデーションに弾かれうるので値のあるものだけ送る。
@@ -159,7 +166,17 @@ jobs:
           export PREVIEW_ENV_JSON
 
           apprun-cli deploy
-          echo "url=$(apprun-cli url)" >> "$GITHUB_OUTPUT"
+
+          # `echo "url=$(apprun-cli url)"` と書くと、URL取得が失敗しても echo が
+          # 成功するため空のURLがそのまま後続へ流れ、検証ステップが的外れな
+          # エラーを出す。取得を分けて明示的に確認する。
+          url=$(apprun-cli url)
+          if [ -z "$url" ]; then
+            echo "::error::デプロイ後の公開URLを取得できませんでした"
+            exit 1
+          fi
+
+          echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "image=$PREVIEW_IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Verify the deployment
@@ -188,7 +205,11 @@ jobs:
           fi
 
           # 認証が実際に掛かっているか確認する。掛かっていなければ公開状態なので失敗させる。
-          gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/")
+          if ! gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/"); then
+            echo "::error::プレビューURLへ到達できず、保護状態を確認できませんでした"
+            exit 1
+          fi
+
           if [ "$gate" != "401" ]; then
             echo "::error::プレビューが保護されていません（GET / が ${gate} を返しました。401であるべきです）"
             exit 1
