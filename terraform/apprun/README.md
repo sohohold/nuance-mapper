@@ -167,15 +167,19 @@ terraform output -raw app_url
 
 ## トークンのローテーション
 
-レジストリのトークンは`password_wo`属性で渡すため、値そのものはTerraform stateに保存されません。一方、Terraformは値を読み戻せないため、変更時は`registry_password_version`も増やす必要があります。
+レジストリのトークンは`password_wo`属性で渡すため、値そのものはTerraform stateに保存されません。一方、Terraformは値を読み戻せないため、**変更時は`registry_password_version`を現在の値より大きくする**必要があります。同じ番号のまま新しいトークンを渡しても、Terraformは「変更なし」と判断して送信しません。
+
+現在の値は[`variables.tf`](./variables.tf)のデフォルトで、**2**です。次にローテーションするときは3を指定します。
 
 ```bash
 terraform apply \
   -var="registry_password=新しいトークン" \
-  -var="registry_password_version=2"
+  -var="registry_password_version=3"
 ```
 
-GitHub Actionsでは`DOCKERHUB_TOKEN`を更新したうえで、[`variables.tf`](./variables.tf)の`registry_password_version`を増やすか、ワークフローから対応する変数を渡してください。
+GitHub Actionsでは`DOCKERHUB_TOKEN`を更新したうえで、[`variables.tf`](./variables.tf)のデフォルト値を増やしてください（ワークフローはこの変数を渡していないため、デフォルトがそのまま使われます）。
+
+**レジストリそのものを差し替える場合も、認証情報が変わるのでこの番号を増やす必要があります。** さくらのコンテナレジストリからDocker Hubへ移行した際にこれを怠り、serverとusernameだけが新しくなってパスワードが旧レジストリのまま更新され、APIが400を返して本番が停止しかけました。
 
 ## リソースを削除する
 
