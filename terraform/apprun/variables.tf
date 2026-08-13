@@ -31,6 +31,15 @@ variable "image_registry_server" {
   EOT
   type        = string
   default     = "index.docker.io"
+
+  # この変数は以前イメージ参照のプレフィックスを兼ねており、`docker.io` が正しい値
+  # としてREADMEとtfvars.exampleに載っていた。名前は同じまま意味だけが変わったので、
+  # gitignoreされた terraform.tfvars に古い値が残っていると、デフォルトを上書きして
+  # 本番を止めたのと同じ400を静かに再現する。planの時点で止める。
+  validation {
+    condition     = var.image_registry_server != "docker.io"
+    error_message = "image_registry_server はAppRunがレジストリ認証に使うホスト名で、Docker Hubでは index.docker.io を指定する。docker.io を送るとAPIが400 Validation Errorを返す。イメージ参照のプレフィックスを変えたい場合は image_registry_host を使うこと。"
+  }
 }
 
 variable "image_namespace" {
