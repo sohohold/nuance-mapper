@@ -257,17 +257,6 @@ jobs:
               "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
           fi
 
-          # Next.jsの静的HTMLはs-maxage=31536000を返し、WebAccelはオリジンの
-          # キャッシュ期間を尊重する。新イメージへの切り替え後に全件削除しないと
-          # 旧HTMLと旧hashed chunk参照が最大1年残るため、デプロイごとにpurgeする。
-          purge_payload=$(jq -nc --arg domain "$WEBACCEL_SUBDOMAIN" \
-            '{Site: {Domain: $domain}}')
-          curl --fail-with-body --silent --show-error \
-            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
-            --header "Content-Type: application/json" \
-            --request POST --data "$purge_payload" \
-            "$api_root/deleteallcache" >/dev/null
-
           revision=""
           for attempt in $(seq 1 60); do
             body=$(curl --fail --silent --show-error --max-time 60 \
@@ -280,6 +269,18 @@ jobs:
             echo "::error::WebAccel revision mismatch (expected=$EXPECTED_REVISION actual=${revision:-none})"
             exit 1
           fi
+
+          # Next.jsの静的HTMLはs-maxage=31536000を返し、WebAccelはオリジンの
+          # キャッシュ期間を尊重する。期待revisionが実際にWebAccel経由で見えてから
+          # 全件削除し、切り替え待ちの旧版でキャッシュが再充填されるのを防ぐ。
+          purge_payload=$(jq -nc --arg domain "$WEBACCEL_SUBDOMAIN" \
+            '{Site: {Domain: $domain}}')
+          curl --fail-with-body --silent --show-error \
+            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+            --header "Content-Type: application/json" \
+            --request POST --data "$purge_payload" \
+            "$api_root/deleteallcache" >/dev/null
+
           echo "Public URL: $WEBACCEL_URL" >> "$GITHUB_STEP_SUMMARY"
 
       # mainへのpushごとにSHAタグが増え続け、Docker Hub無料枠(private 2GiB)を

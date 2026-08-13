@@ -32,7 +32,7 @@ jobs:
     # secretsを受け取れないため対象外にする。
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -231,21 +231,45 @@ jobs:
           # インスタンスに到達する）。応答があることだけを条件にすると、2回目以降の
           # デプロイで旧リビジョンを掴んだ時点で抜けてしまうので、期待する
           # リビジョンが出るまで待つ。
+          check_gate() {
+            label=$1
+            mode=$2
+            shift 2
+
+            if ! status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$@"); then
+              if [ "$mode" = "required" ]; then
+                echo "::error::${label}へ到達できず、保護状態を確認できませんでした"
+                exit 1
+              fi
+              return
+            fi
+
+            case "$status" in
+              401) ;;
+              502|503|504)
+                if [ "$mode" = "required" ]; then
+                  echo "::error::${label}の認証を確認できません（HTTP ${status}）"
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::${label}が保護されていません（HTTP ${status}）"
+                exit 1
+                ;;
+            esac
+          }
+
           revision=""
           for i in $(seq 1 30); do
             # PRのコードは認証用proxy自体を変更できる。期待revisionを待ってから
             # 認証を調べると、その間に無保護の版を公開し続けるため、各試行で先に
-            # 外側から確認する。401は同期済み、503はfail-closed中なので安全。
-            if gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/"); then
-              case "$gate" in
-                401|503) ;;
-                502|504) ;; # AppRunの切り替え中は一時的に返り得るので再試行する
-                *)
-                  echo "::error::プレビューが保護されていません（GET / が ${gate} を返しました）"
-                  exit 1
-                  ;;
-              esac
-            fi
+            # 外側から確認する。ページだけでなく、実際にsecretを使うAPI境界もPOSTし、
+            # matcherからAPIだけが外された場合を検出する。401は同期済み、503は
+            # fail-closed中、502/504はAppRun切り替え中として待機する。
+            check_gate "GET /" transitional "${URL}/"
+            check_gate "POST /api/generate" transitional \
+              --request POST --header 'Content-Type: application/json' \
+              --data '{}' "${URL}/api/generate"
 
             body=$(curl -sS --max-time 60 "${URL}/api/health" || true)
             revision=$(echo "$body" | jq -r '.revision // empty' 2>/dev/null || true)
@@ -258,16 +282,11 @@ jobs:
             exit 1
           fi
 
-          # 認証が実際に掛かっているか確認する。掛かっていなければ公開状態なので失敗させる。
-          if ! gate=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${URL}/"); then
-            echo "::error::プレビューURLへ到達できず、保護状態を確認できませんでした"
-            exit 1
-          fi
-
-          if [ "$gate" != "401" ]; then
-            echo "::error::プレビューが保護されていません（GET / が ${gate} を返しました。401であるべきです）"
-            exit 1
-          fi
+          # 切り替え完了後はページとsecret-backed APIの両方で401を必須にする。
+          check_gate "GET /" required "${URL}/"
+          check_gate "POST /api/generate" required \
+            --request POST --header 'Content-Type: application/json' \
+            --data '{}' "${URL}/api/generate"
 
           echo "revision=${revision} / 認証あり" >> "$GITHUB_STEP_SUMMARY"
 
