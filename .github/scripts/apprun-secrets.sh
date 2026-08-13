@@ -10,12 +10,23 @@ set -euo pipefail
 
 APP_SECRET_VERSION="${APP_SECRET_VERSION:-${TF_VAR_app_secret_version:-}}"
 APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY="${APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY:-false}"
+APPRUN_SECRET_SYNC_FORCE="${APPRUN_SECRET_SYNC_FORCE:-false}"
 : "${APP_NAME:?APP_NAME is required}"
 : "${APP_SECRET_VERSION:?APP_SECRET_VERSION is required}"
 : "${SAKURA_ACCESS_TOKEN:?SAKURA_ACCESS_TOKEN is required}"
 : "${SAKURA_ACCESS_TOKEN_SECRET:?SAKURA_ACCESS_TOKEN_SECRET is required}"
 
 APPRUN_API_ROOT="${APPRUN_API_ROOT:-https://secure.sakura.ad.jp/cloud/api/apprun/1.0/apprun/api}"
+
+defer_secret_sync() {
+  echo "$1"
+  # pre-syncを延期した場合、deployが版番号だけを先に更新してもpost-syncが
+  # 古いsecret値を「同期済み」と誤認しないよう、後段へ強制同期フラグを渡す。
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "deferred=true" >> "$GITHUB_OUTPUT"
+  fi
+  exit 0
+}
 
 secret_json=$(jq -nc \
   --arg gemini "${GEMINI_API_KEY:-}" \
@@ -54,8 +65,7 @@ app_ids=$(jq -r --arg name "$APP_NAME" '.data[] | select(.name == $name) | .id' 
 app_count=$(grep -c . <<<"$app_ids" || true)
 
 if [ "$app_count" -eq 0 ]; then
-  echo "AppRun application $APP_NAME does not exist yet; secret sync is deferred."
-  exit 0
+  defer_secret_sync "AppRun application $APP_NAME does not exist yet; secret sync is deferred."
 fi
 if [ "$app_count" -ne 1 ]; then
   echo "Expected exactly one AppRun application named $APP_NAME, found $app_count." >&2
@@ -72,8 +82,7 @@ for attempt in $(seq 1 60); do
   [ "$status" = "Healthy" ] && break
   if [ "$status" = "UnHealthy" ]; then
     if [ "$APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY" = "true" ]; then
-      echo "AppRun application $APP_NAME is unhealthy; secret sync is deferred until after the recovery apply."
-      exit 0
+      defer_secret_sync "AppRun application $APP_NAME is unhealthy; secret sync is deferred until after the recovery apply."
     fi
     echo "AppRun application $APP_NAME is unhealthy; refusing to change secrets." >&2
     exit 1
@@ -90,7 +99,8 @@ current_version=$(jq -r '
 current_secret_keys=$(jq -c '[.components[].secret[]?.key] | unique | sort' \
   <<<"$application")
 
-if [ "$current_version" = "$APP_SECRET_VERSION" ] \
+if [ "$APPRUN_SECRET_SYNC_FORCE" != "true" ] \
+  && [ "$current_version" = "$APP_SECRET_VERSION" ] \
   && [ "$current_secret_keys" = "$expected_secret_keys" ]; then
   echo "AppRun secrets are already current for $APP_NAME (version $APP_SECRET_VERSION)."
   exit 0

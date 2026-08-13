@@ -105,6 +105,25 @@ jobs:
             exit 1
           fi
 
+      # 既存Previewのローテーションでは、CLIが新しい版番号を先に書くとpost-syncが
+      # 同じキー集合を見て古い値を同期済みと誤認する。deploy前に更新しておく。
+      # 新規作成またはUnHealthyなら延期し、post-syncを強制する出力を返す。
+      - name: Sync existing preview secrets before deploy
+        id: secrets-before
+        env:
+          APP_NAME: ${{ steps.names.outputs.app_name }}
+          APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY: "true"
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+        run: bash .github/scripts/apprun-secrets.sh
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -181,9 +200,10 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "image=$PREVIEW_IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Sync preview secrets
+      - name: Sync preview secrets after deploy
         env:
           APP_NAME: ${{ steps.names.outputs.app_name }}
+          APPRUN_SECRET_SYNC_FORCE: ${{ steps.secrets-before.outputs.deferred }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

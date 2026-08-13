@@ -41,6 +41,8 @@ Settings → Secrets and variables → Actions → Repository secrets に2つ追
 
 Repository variable `APPRUN_SECRET_VERSION` も本番と共用します。LLM APIキー、Upstash認証情報、Basic認証パスワードをローテーションしたらこの値を増やしてください。
 
+既存Previewではデプロイ前にsecretを同期してから同じ版番号をCLIへ渡します。新規作成または非Healthyで事前同期を延期した場合は、デプロイ後の同期を強制するため、版番号だけが先に進んで古いsecret値を同期済みと誤認することはありません。
+
 本番と別のキーを使いたい場合は、`preview-sakura.yml` の `Deploy to AppRun` ステップの `env` を差し替えてください。
 
 ## 使い方

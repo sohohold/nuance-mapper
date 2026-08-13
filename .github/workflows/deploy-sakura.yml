@@ -85,6 +85,7 @@ jobs:
       # アプリがまだ存在しない場合は安全にスキップし、apply後の同じ処理で設定する。
       # 既存アプリがUnHealthyなら同期を延期し、ロールバックや修正デプロイを妨げない。
       - name: Sync AppRun secrets before apply
+        id: secrets-before
         env:
           APP_NAME: nuance-mapper
           APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
@@ -141,6 +142,9 @@ jobs:
         env:
           APP_NAME: nuance-mapper
           APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
+          # pre-syncが新規作成またはUnHealthyで延期された場合、applyが版番号だけを
+          # 更新していても古いsecretを同期済みと誤認しないよう強制する。
+          APPRUN_SECRET_SYNC_FORCE: ${{ steps.secrets-before.outputs.deferred }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -176,10 +180,12 @@ jobs:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
           WEBACCEL_SITE_ID: ${{ vars.WEBACCEL_SITE_ID }}
+          WEBACCEL_SUBDOMAIN: ${{ vars.WEBACCEL_SUBDOMAIN }}
           WEBACCEL_URL: ${{ vars.WEBACCEL_URL }}
         run: |
           set -euo pipefail
           : "${WEBACCEL_SITE_ID:?WEBACCEL_SITE_ID repository variable is required}"
+          : "${WEBACCEL_SUBDOMAIN:?WEBACCEL_SUBDOMAIN repository variable is required}"
           : "${WEBACCEL_URL:?WEBACCEL_URL repository variable is required}"
           api_root="https://secure.sakura.ad.jp/cloud/zone/is1a/api/webaccel/1.0"
           payload=$(jq -nc --arg origin "$APP_ORIGIN_HOST" '{Site: {
@@ -250,6 +256,17 @@ jobs:
               --request PUT --data '{"Site":{"Status":"enabled"}}' \
               "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
           fi
+
+          # Next.jsの静的HTMLはs-maxage=31536000を返し、WebAccelはオリジンの
+          # キャッシュ期間を尊重する。新イメージへの切り替え後に全件削除しないと
+          # 旧HTMLと旧hashed chunk参照が最大1年残るため、デプロイごとにpurgeする。
+          purge_payload=$(jq -nc --arg domain "$WEBACCEL_SUBDOMAIN" \
+            '{Site: {Domain: $domain}}')
+          curl --fail-with-body --silent --show-error \
+            --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+            --header "Content-Type: application/json" \
+            --request POST --data "$purge_payload" \
+            "$api_root/deleteallcache" >/dev/null
 
           revision=""
           for attempt in $(seq 1 60); do

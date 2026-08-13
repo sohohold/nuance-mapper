@@ -37,7 +37,7 @@ flowchart LR
 | --- | --- |
 | `sakura_apprun_shared` | Next.jsコンテナを実行するAppRunアプリ |
 
-本番の固定入口は `https://jlzcioc5.user.webaccel.jp` です。WebAccelサイト自体はTerraformのdestroy対象に含めず、AppRunの公開URLが変わった場合はデプロイワークフローがオリジンFQDNだけを更新します。
+本番の固定入口は `https://jlzcioc5.user.webaccel.jp` です。WebAccelサイト自体はTerraformのdestroy対象に含めず、AppRunの公開URLが変わった場合はデプロイワークフローがオリジンFQDNだけを更新します。Next.jsの静的HTMLは長い`s-maxage`を返すため、デプロイ後はWebAccelの全キャッシュを削除して旧HTMLを残しません。
 
 コンテナイメージの保管先はDocker Hubで、Terraformの管理対象外です。Terraform state用のオブジェクトストレージバケットも管理対象外で、初回のみ手動で作成します。
 
