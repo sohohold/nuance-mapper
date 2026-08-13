@@ -58,9 +58,24 @@ jobs:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
         run: |
-          # 存在しないアプリに delete をかけるとエラーになるので先に確認する
-          if ! apprun-cli list | jq -se --arg n "$PREVIEW_APP_NAME" \
-            'any(.[]; .name == $n)' > /dev/null; then
+          # 存在しないアプリに delete をかけるとエラーになるので先に確認する。
+          #
+          # 一覧の取得失敗を「存在しない」と同じ扱いにしてはいけない。後続の
+          # タグ削除とDeployment無効化まで進んでしまい、アプリが残ったまま
+          # イメージだけ消えた孤児が、限られた枠を占有し続けることになる。
+          if ! apps=$(apprun-cli list); then
+            echo "::error::AppRunのアプリ一覧を取得できませんでした。削除の要否を判断できないので中断します。"
+            exit 1
+          fi
+
+          # list は1行1オブジェクトのJSONを流すので -s でまとめる
+          if ! exists=$(printf '%s' "$apps" | jq -s --arg n "$PREVIEW_APP_NAME" \
+            'any(.[]; .name == $n)'); then
+            echo "::error::AppRunのアプリ一覧を解釈できませんでした。削除の要否を判断できないので中断します。"
+            exit 1
+          fi
+
+          if [ "$exists" != "true" ]; then
             echo "アプリ ${PREVIEW_APP_NAME} は存在しない。何もしない"
             echo "deleted=false" >> "$GITHUB_OUTPUT"
             exit 0

@@ -74,9 +74,19 @@ jobs:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
         run: |
+          # 一覧を取れなければ空き枠を判断できない。取得失敗を「0件」と誤認すると
+          # 上限に達していても作成へ進んでしまうので、ここで止める。
+          if ! apps=$(apprun-cli list); then
+            echo "::error::AppRunのアプリ一覧を取得できませんでした。空き枠を判断できないので中断します。"
+            exit 1
+          fi
+
           # list は1行1オブジェクトのJSONを流すので -s でまとめる
-          names=$(apprun-cli list | jq -s --arg p "$PREVIEW_APP_PREFIX" \
-            '[.[] | select(.name | startswith($p)) | .name]')
+          if ! names=$(printf '%s' "$apps" | jq -s --arg p "$PREVIEW_APP_PREFIX" \
+            '[.[] | select(.name | startswith($p)) | .name]'); then
+            echo "::error::AppRunのアプリ一覧を解釈できませんでした。"
+            exit 1
+          fi
           echo "既存のプレビュー: $names"
 
           if echo "$names" | jq -e --arg n "$APP_NAME" 'index($n)' > /dev/null; then

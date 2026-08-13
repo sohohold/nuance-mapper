@@ -55,15 +55,21 @@ dockerhub_tags() {
 
 # 指定したタグを削除する。HTTPステータスをログに出すだけで、失敗しても停止しない。
 # 掃除の失敗でデプロイやプレビューを落とす価値はない。
+#
+# curl自体が失敗した場合（DNS・接続・タイムアウト）も、呼び出し元のstepを
+# 巻き込まないよう関数内で吸収し、残りのタグの削除を続ける。
 dockerhub_delete_tags() {
   local jwt="$1" repo="$2"
   shift 2
   local tag code
 
   for tag in "$@"; do
-    code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+    if code=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
       -H "Authorization: JWT ${jwt}" \
-      "${DOCKERHUB_API}/repositories/${repo}/tags/${tag}/")
-    echo "delete ${tag} -> ${code}"
+      "${DOCKERHUB_API}/repositories/${repo}/tags/${tag}/"); then
+      echo "delete ${tag} -> ${code}"
+    else
+      echo "::warning::タグ ${tag} の削除に失敗しました（通信エラー）"
+    fi
   done
 }
