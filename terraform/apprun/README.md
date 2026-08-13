@@ -70,7 +70,7 @@ stateを誤って上書きした場合に復旧できるよう、古いファイ
 1. Docker Hubで`nuance-mapper`リポジトリを作成します。
 2. Account Settings → Personal access tokensでトークンを発行します。pushする側（GitHub Actions）にはRead & Write、AppRunがpullするだけならReadで足ります。ここでは同じトークンを両方に使う前提です。
 
-無料のPersonalプランでは、privateリポジトリは1つ・2GiBまでです。タグが増え続けると枠を使い切るため、不要になったタグは削除してください。
+無料のPersonalプランでは、privateリポジトリは1つ・2GiBまでです。本番のSHAタグはデプロイのたびに増えるため、デプロイワークフローの最後で新しい順に10件だけ残して自動削除します（保持数は`KEEP_TAGS`）。プレビュー用の`pr-`で始まるタグはプレビュー側のワークフローが管理するので対象外です。
 
 イメージの参照は`docker.io/<ユーザー名>/nuance-mapper:<タグ>`の形式です。AppRunがレジストリのホスト名として受け付けるのは`docker.io`のみで、`index.docker.io`などは弾かれます。プレフィックスの省略もできません。
 
@@ -218,6 +218,6 @@ terraform state rm sakura_container_registry.main
 
 AppRunは`min_scale = 0`のため、アクセスがない間は実行インスタンスをゼロにできます。ただしスケールゼロからの復帰には基盤側で9秒前後かかることを観測しています。
 
-Docker Hubへ移行したことで、さくらのコンテナレジストリの料金は発生しません。代わりに無料プランの制約（privateは1リポジトリ・2GiB、認証済みpullは200回/6時間）が上限になります。
+Docker Hubへ移行したことで、さくらのコンテナレジストリの料金は発生しません。代わりに無料プランの制約（privateは1リポジトリ・2GiB、認証済みpullは200回/6時間）が上限になります。本番タグは直近10件に自動で整理されるため、放置してもこの枠を使い切ることはありません。切り戻せる範囲もこの10件です。
 
 B2は無料利用枠を超えた保存容量、API呼び出し、転送量などが課金対象になる可能性があります。利用前に[Backblaze B2 Pricing](https://www.backblaze.com/cloud-storage/pricing)と[さくらのクラウド料金シミュレーション](https://cloud.sakura.ad.jp/payment/simulation/)で最新の単価を確認してください。

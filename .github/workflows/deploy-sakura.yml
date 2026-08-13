@@ -129,3 +129,48 @@ jobs:
         run: |
           echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "$(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"
+
+      # mainへのpushごとにSHAタグが増え続け、Docker Hub無料枠(private 2GiB)を
+      # いずれ使い切る。新しい順にKEEP_TAGS件だけ残して残りを消す。
+      # 切り戻し(build=false)のときは走らせない。戻し先のタグを消しかねないため。
+      - name: Prune old production image tags
+        if: steps.vars.outputs.build == 'true'
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          # 切り戻し先として残す世代数
+          KEEP_TAGS: "10"
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          jwt=$(curl -sS -X POST https://hub.docker.com/v2/users/login/ \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+              '{username: $u, password: $p}')" | jq -r '.token // empty')
+
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hubへのログインに失敗したのでタグを整理できません"
+            exit 0
+          fi
+
+          repo_url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/nuance-mapper"
+
+          # プレビュー用の pr-* はプレビュー側のワークフローが管理するので触らない。
+          # 今デプロイしたタグも、保持数の計算とは別に必ず除外する。
+          stale=$(curl -sS -H "Authorization: JWT ${jwt}" "${repo_url}/tags/?page_size=100" \
+            | jq -r --arg keep "$KEEP_TAGS" --arg current "$IMAGE_TAG" '
+              [.results[]? | select(.name | startswith("pr-") | not)]
+              | sort_by(.last_updated) | reverse
+              | .[($keep | tonumber):]
+              | .[].name
+              | select(. != $current)')
+
+          if [ -z "$stale" ]; then
+            echo "整理対象のタグなし（保持数: ${KEEP_TAGS}）"
+            exit 0
+          fi
+
+          for tag in $stale; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: JWT ${jwt}" "${repo_url}/tags/${tag}/")
+            echo "delete ${tag} -> ${code}"
+          done
