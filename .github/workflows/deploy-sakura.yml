@@ -83,10 +83,12 @@ jobs:
       # provider v3.12.7はcomponents[].secretに未対応。既存アプリではapplyより先に
       # 移行することで、Terraformのrefreshが通常envから消えた機密値をstateへ反映する。
       # アプリがまだ存在しない場合は安全にスキップし、apply後の同じ処理で設定する。
+      # 既存アプリがUnHealthyなら同期を延期し、ロールバックや修正デプロイを妨げない。
       - name: Sync AppRun secrets before apply
         env:
           APP_NAME: nuance-mapper
           APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
+          APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY: "true"
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -202,20 +204,31 @@ jobs:
           current_origin=$(jq -r '.Site.Origin // empty' <<<"$site")
           current_status=$(jq -r '.Site.Status // empty' <<<"$site")
           if [ "$current_origin" != "$APP_ORIGIN_HOST" ]; then
-            enable_site() {
+            enable_site_best_effort() {
               curl --fail-with-body --silent --show-error \
                 --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
                 --header "Content-Type: application/json" \
                 --request PUT --data '{"Site":{"Status":"enabled"}}' \
                 "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null || true
             }
+            enable_site() {
+              curl --fail-with-body --silent --show-error \
+                --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+                --header "Content-Type: application/json" \
+                --request PUT --data '{"Site":{"Status":"enabled"}}' \
+                "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+            }
 
-            curl --fail-with-body --silent --show-error \
-              --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
-              --header "Content-Type: application/json" \
-              --request PUT --data '{"Site":{"Status":"disabled"}}' \
-              "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
-            trap enable_site EXIT
+            # 更新中に失敗しても、終了時に固定URLを再有効化する。既にdisabledなら
+            # 同値更新が412になるため、無効化リクエスト自体を省略する。
+            trap enable_site_best_effort EXIT
+            if [ "$current_status" != "disabled" ]; then
+              curl --fail-with-body --silent --show-error \
+                --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
+                --header "Content-Type: application/json" \
+                --request PUT --data '{"Site":{"Status":"disabled"}}' \
+                "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
+            fi
 
             curl --fail-with-body --silent --show-error \
               --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \

@@ -9,6 +9,7 @@
 set -euo pipefail
 
 APP_SECRET_VERSION="${APP_SECRET_VERSION:-${TF_VAR_app_secret_version:-}}"
+APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY="${APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY:-false}"
 : "${APP_NAME:?APP_NAME is required}"
 : "${APP_SECRET_VERSION:?APP_SECRET_VERSION is required}"
 : "${SAKURA_ACCESS_TOKEN:?SAKURA_ACCESS_TOKEN is required}"
@@ -70,6 +71,10 @@ for attempt in $(seq 1 60); do
   status=$(jq -r '.status' <<<"$application")
   [ "$status" = "Healthy" ] && break
   if [ "$status" = "UnHealthy" ]; then
+    if [ "$APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY" = "true" ]; then
+      echo "AppRun application $APP_NAME is unhealthy; secret sync is deferred until after the recovery apply."
+      exit 0
+    fi
     echo "AppRun application $APP_NAME is unhealthy; refusing to change secrets." >&2
     exit 1
   fi
