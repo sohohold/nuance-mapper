@@ -15,25 +15,22 @@ locals {
   app_env = [
     for k, v in local.app_env_all : { key = k, value = v } if v != ""
   ]
-}
 
-# ── コンテナレジストリ ──
-# `docker push` の宛先。fqdn = "<registry_subdomain_label>.sakuracr.jp"
-resource "sakura_container_registry" "main" {
-  name            = "${var.app_name}-registry"
-  subdomain_label = var.registry_subdomain_label
-  description     = "nuance-mapper container images"
-
-  user = [{
-    name                = var.registry_username
-    password_wo         = var.registry_password
-    password_wo_version = var.registry_password_version
-    permission          = "all"
-  }]
+  # digest指定(`sha256:...`)は `@`、タグ指定は `:` で連結する。
+  image_ref = format(
+    "%s/%s/%s%s%s",
+    var.image_registry_server,
+    var.image_namespace,
+    var.image_repository,
+    startswith(var.image_tag, "sha256:") ? "@" : ":",
+    var.image_tag,
+  )
 }
 
 # ── AppRun（共用型） ──
 # min_scale = 0 により、アクセスが無い間はインスタンスが起動せず課金されない。
+# コンテナイメージは外部レジストリ(Docker Hub)から取得するため、このコンフィグに
+# レジストリリソースは含まれない。
 resource "sakura_apprun_shared" "main" {
   name = var.app_name
   # /api/generate はSSEレスポンスをハンドラ完了後にしか送り始めない。
@@ -52,8 +49,8 @@ resource "sakura_apprun_shared" "main" {
 
     deploy_source = {
       container_registry = {
-        image               = "${sakura_container_registry.main.fqdn}/${var.app_name}:${var.image_tag}"
-        server              = sakura_container_registry.main.fqdn
+        image               = local.image_ref
+        server              = var.image_registry_server
         username            = var.registry_username
         password_wo         = var.registry_password
         password_wo_version = var.registry_password_version
@@ -62,9 +59,13 @@ resource "sakura_apprun_shared" "main" {
 
     env = local.app_env
 
+    # ヘルスチェックは `/` ではなく専用エンドポイントを叩く。`/` はページ全体を
+    # レンダリングするうえ、プレビュー環境で有効になるBasic認証(src/proxy.ts)が
+    # 401を返すため、AppRunがインスタンスを不健全とみなしてしまう。
+    # /api/health は認証の matcher から除外してある。
     probe = {
       http_get = {
-        path = "/"
+        path = "/api/health"
         port = 3000
       }
     }

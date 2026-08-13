@@ -3,7 +3,7 @@ output "app_url" {
   value       = sakura_apprun_shared.main.public_url
 }
 
-output "registry_fqdn" {
-  description = "コンテナレジストリのFQDN（docker push先）"
-  value       = sakura_container_registry.main.fqdn
+output "deployed_image" {
+  description = "AppRunに設定されているコンテナイメージの参照"
+  value       = local.image_ref
 }

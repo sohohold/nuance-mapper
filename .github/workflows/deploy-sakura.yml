@@ -1,12 +1,16 @@
 name: Deploy to Sakura AppRun
 
-# 手動起動のみ。main への merge では自動デプロイしない
-# (実運用は Vercel、Sakura 側は費用を抑えるため使いたい時だけ起動する)
+# main への push (PRのmergeを含む) で自動デプロイする。
+# レジストリをDocker Hubへ移したことで常設リソースの課金が無くなり、AppRun自体も
+# min_scale=0 でアイドル時は課金されないため、常時追従させても費用が増えない。
+# 任意のタグをデプロイしたい場合や切り戻しのために手動起動も残す。
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "コンテナイメージのタグ（空の場合はコミットSHAを使用）"
+        description: "デプロイ済みイメージのタグ。指定するとビルドせずそのイメージを配る（切り戻し用）。空ならコミットSHAでビルドする"
         required: false
         type: string
 
@@ -36,7 +40,16 @@ jobs:
         # env経由でシェル変数として渡す(シェルインジェクション対策)
         env:
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
-        run: echo "tag=${IMAGE_TAG_INPUT:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "$IMAGE_TAG_INPUT" ]; then
+            # 既存タグの指定は切り戻し。ここでビルドすると、チェックアウト中の
+            # ソースを指定タグへ上書きしてしまい、戻したいイメージが失われる。
+            echo "tag=$IMAGE_TAG_INPUT"
+            echo "build=false"
+          else
+            echo "tag=$GITHUB_SHA"
+            echo "build=true"
+          fi >> "$GITHUB_OUTPUT"
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -67,38 +80,25 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: terraform init -backend-config=backend.hcl
 
-      - name: Terraform apply (registry only)
-        # 初回実行時、コンテナレジストリはまだ存在しないため docker push より先に作る。
-        # 2回目以降はすでに存在するので実質no-op。
-        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Log in to Docker Hub
+        if: steps.vars.outputs.build == 'true'
         env:
-          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
-          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          terraform apply -auto-approve -target=sakura_container_registry.main
-
-      - name: Log in to Sakura Container Registry
-        env:
-          REGISTRY_PASSWORD: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
-          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          REGISTRY_USERNAME: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-        run: |
-          echo "$REGISTRY_PASSWORD" | docker login \
-            "${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp" \
-            -u "$REGISTRY_USERNAME" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | docker login \
+            -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Build and push image
+        if: steps.vars.outputs.build == 'true'
         env:
-          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
-          IMAGE="${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp/nuance-mapper:${IMAGE_TAG}"
-          docker build -t "$IMAGE" .
+          IMAGE="docker.io/${DOCKERHUB_USERNAME}/nuance-mapper:${IMAGE_TAG}"
+          # BUILD_REVISION は /api/health が返す。稼働中のインスタンスが
+          # どのビルドかを外から確認できるようにするためのもの。
+          docker build --build-arg "BUILD_REVISION=${IMAGE_TAG}" -t "$IMAGE" .
           docker push "$IMAGE"
 
       - name: Terraform apply
@@ -108,9 +108,9 @@ jobs:
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          TF_VAR_image_namespace: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.DOCKERHUB_TOKEN }}
           TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_cerebras_api_key: ${{ secrets.CEREBRAS_API_KEY }}
@@ -129,3 +129,48 @@ jobs:
         run: |
           echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "$(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"
+
+      # mainへのpushごとにSHAタグが増え続け、Docker Hub無料枠(private 2GiB)を
+      # いずれ使い切る。新しい順にKEEP_TAGS件だけ残して残りを消す。
+      # 切り戻し(build=false)のときは走らせない。戻し先のタグを消しかねないため。
+      - name: Prune old production image tags
+        if: steps.vars.outputs.build == 'true'
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          # 切り戻し先として残す世代数
+          KEEP_TAGS: "10"
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          source .github/scripts/dockerhub.sh
+
+          jwt=$(dockerhub_login)
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hubへのログインに失敗したのでタグを整理できません"
+            exit 0
+          fi
+
+          repo="${DOCKERHUB_USERNAME}/nuance-mapper"
+
+          # プレビュー用の pr-* はプレビュー側のワークフローが管理するので触らない。
+          # 今デプロイしたタグも、保持数の計算とは別に必ず除外する。
+          if ! tags=$(dockerhub_tags "$jwt" "$repo"); then
+            echo "::warning::タグ一覧を取得できなかったので整理をスキップします"
+            exit 0
+          fi
+
+          stale=$(printf '%s' "$tags" \
+            | jq -r --arg keep "$KEEP_TAGS" --arg current "$IMAGE_TAG" '
+              [.[] | select(.name | startswith("pr-") | not)]
+              | sort_by(.last_updated) | reverse
+              | .[($keep | tonumber):]
+              | .[].name
+              | select(. != $current)')
+
+          if [ -z "$stale" ]; then
+            echo "整理対象のタグなし（保持数: ${KEEP_TAGS}）"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
+          dockerhub_delete_tags "$jwt" "$repo" $stale

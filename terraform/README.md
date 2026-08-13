@@ -13,7 +13,7 @@ Nuance Mapperをさくらのクラウドへ構築するTerraform構成です。�
 | スケーリング | `min_scale = 0`、最大数を指定 | 常時起動、固定スペック |
 | ネットワーク | AppRunの公開エンドポイント | 共有セグメント＋パケットフィルタ |
 | 運用単位 | コンテナイメージとリビジョン | OS、Node.js、systemd、アプリ |
-| 主な課金対象 | レジストリ、AppRunの使用量 | サーバ、ディスクなどの常設リソース |
+| 主な課金対象 | AppRunの使用量（イメージはDocker Hubの無料枠） | サーバ、ディスクなどの常設リソース |
 
 アクセスが断続的で、コンテナとCI/CDを中心に運用する場合は`apprun/`が適しています。OSレベルの設定、SSHによる調査、systemdでのプロセス管理が必要な場合は`server/`を選択します。
 
@@ -26,7 +26,7 @@ flowchart TB
     R --> S[仮想サーバ方式]
 
     A --> GA[GitHub Actions]
-    GA --> CR[コンテナレジストリ]
+    GA --> CR[Docker Hub]
     CR --> AR[AppRun 共用型]
     GA --> OS[Backblaze B2<br/>Terraform state]
 
@@ -39,7 +39,7 @@ flowchart TB
 
 ```text
 terraform/
-├── apprun/                 # AppRun、コンテナレジストリ、リモートstate
+├── apprun/                 # AppRun、リモートstate（イメージはDocker Hub）
 │   ├── main.tf
 │   ├── variables.tf
 │   ├── outputs.tf

@@ -1,0 +1,171 @@
+name: Destroy Preview on Sakura AppRun
+
+# プレビュー環境を回収する。AppRunのアプリ数上限（プロジェクトあたり5）があるため、
+# 消し忘れはそのまま「次のPRでプレビューを作れない」に直結する。
+on:
+  pull_request:
+    types: [closed, unlabeled]
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+# 作成ワークフローと同じgroup。cancel-in-progress: false なので、デプロイ中に
+# PRが閉じられた場合は作成が終わってから削除が走る（作りかけを消さない）。
+concurrency:
+  group: sakura-apprun-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPO: nuance-mapper
+  PREVIEW_APP_PREFIX: nuance-mapper-pr-
+
+jobs:
+  destroy:
+    # closed は無条件。unlabeled は preview ラベルが外れた時だけ。
+    if: >-
+      github.event.action == 'closed' ||
+      github.event.label.name == 'preview'
+    runs-on: ubuntu-latest
+    steps:
+      # PRが閉じた後は refs/pull/N/merge を取得できないことがあるため、
+      # 既定のmergerefではなくベースブランチを取る。必要なのは
+      # .github/apprun/preview.jsonnet だけで、これはmain上にある。
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Resolve names
+        id: names
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "app_name=${PREVIEW_APP_PREFIX}${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - uses: fujiwara/apprun-cli@v0
+
+      - name: Delete the AppRun application
+        id: delete
+        env:
+          APPRUN_CLI_APP: .github/apprun/preview.jsonnet
+          # 削除にもアプリ定義ファイルが要る。定義は must_env で値を要求するが、
+          # 削除に使うのは name だけなので、それ以外はダミーで足りる。
+          DOCKERHUB_TOKEN: unused
+          DOCKERHUB_USERNAME: unused
+          PREVIEW_APP_NAME: ${{ steps.names.outputs.app_name }}
+          PREVIEW_ENV_JSON: "[]"
+          PREVIEW_IMAGE: docker.io/unused/unused:unused
+          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
+          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
+        run: |
+          # 存在しないアプリに delete をかけるとエラーになるので先に確認する。
+          #
+          # 一覧の取得失敗を「存在しない」と同じ扱いにしてはいけない。後続の
+          # タグ削除とDeployment無効化まで進んでしまい、アプリが残ったまま
+          # イメージだけ消えた孤児が、限られた枠を占有し続けることになる。
+          if ! apps=$(apprun-cli list); then
+            echo "::error::AppRunのアプリ一覧を取得できませんでした。削除の要否を判断できないので中断します。"
+            exit 1
+          fi
+
+          # list は1行1オブジェクトのJSONを流すので -s でまとめる
+          if ! exists=$(printf '%s' "$apps" | jq -s --arg n "$PREVIEW_APP_NAME" \
+            'any(.[]; .name == $n)'); then
+            echo "::error::AppRunのアプリ一覧を解釈できませんでした。削除の要否を判断できないので中断します。"
+            exit 1
+          fi
+
+          if [ "$exists" != "true" ]; then
+            echo "アプリ ${PREVIEW_APP_NAME} は存在しない。何もしない"
+            echo "deleted=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          apprun-cli delete --force
+          echo "deleted=true" >> "$GITHUB_OUTPUT"
+
+      # イメージを残すとDocker Hub無料枠(private 2GiB)がじわじわ埋まる。
+      #
+      # ただしアプリ削除が失敗したときは走らせない（既定の success() のまま）。
+      # アプリが残ったままタグを消すと、digest参照のイメージを引けなくなり、
+      # スケールゼロから復帰できないプレビューが残る。アプリが元々存在しない場合は
+      # 前のstepが正常終了するので、この掃除は実行される。
+      - name: Delete the preview image tags
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          source .github/scripts/dockerhub.sh
+
+          jwt=$(dockerhub_login)
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hubへのログインに失敗したのでタグを削除できません"
+            exit 0
+          fi
+
+          repo="${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
+          if ! all=$(dockerhub_tags "$jwt" "$repo"); then
+            echo "::warning::タグ一覧を取得できなかったのでタグを削除できません"
+            exit 0
+          fi
+
+          tags=$(printf '%s' "$all" \
+            | jq -r --arg p "pr-${PR_NUMBER}-" '.[] | select(.name | startswith($p)) | .name')
+
+          if [ -z "$tags" ]; then
+            echo "削除対象のタグなし"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
+          dockerhub_delete_tags "$jwt" "$repo" $tags
+
+      # 環境を消したことをGitHub側にも反映する。これをしないと、PRのタイムラインと
+      # Environments画面が、削除済みのアプリを指すURLを有効なものとして出し続ける。
+      - name: Deactivate the deployment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const environment = `preview-pr-${context.payload.pull_request.number}`;
+
+            const deployments = await github.paginate(
+              github.rest.repos.listDeployments,
+              { owner, repo, environment },
+            );
+
+            for (const deployment of deployments) {
+              await github.rest.repos.createDeploymentStatus({
+                owner, repo,
+                deployment_id: deployment.id,
+                state: "inactive",
+                description: "プレビュー環境を削除しました",
+              });
+            }
+
+      - name: Report to the pull request
+        if: steps.delete.outputs.deleted == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const marker = "<!-- sakura-apprun-preview -->";
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (!existing) return;
+
+            await github.rest.issues.updateComment({
+              owner, repo,
+              comment_id: existing.id,
+              body: [
+                marker,
+                "### さくらのAppRun プレビュー環境",
+                "",
+                "削除済みです。アプリ数の枠を1つ解放しました。",
+              ].join("\n"),
+            });

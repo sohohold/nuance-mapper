@@ -26,6 +26,12 @@ RUN pnpm build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+
+# /api/health が返すビルド識別子。通常はコミットSHAを渡す。
+# タグを使い回した際に古いイメージが動き続けても気づけるようにするためのもので、
+# 未指定でも空文字のまま動作する。
+ARG BUILD_REVISION=""
+ENV BUILD_REVISION=$BUILD_REVISION
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
 
