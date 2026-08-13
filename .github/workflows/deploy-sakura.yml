@@ -154,15 +154,26 @@ jobs:
 
           repo_url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/nuance-mapper"
 
+          # 全ページを集めてから絞り込む。1ページ目だけを見ると、プレビュー用タグが
+          # 上位を占めたときに後続ページの古い本番タグが整理対象から漏れる。
+          tags="[]"
+          next="${repo_url}/tags/?page_size=100"
+          for _ in $(seq 1 20); do
+            [ -z "$next" ] && break
+            page=$(curl -sS -H "Authorization: JWT ${jwt}" "$next")
+            tags=$(jq -c -n --argjson acc "$tags" --argjson page "$page" \
+              '$acc + ($page.results // [])')
+            next=$(echo "$page" | jq -r '.next // empty')
+          done
+
           # プレビュー用の pr-* はプレビュー側のワークフローが管理するので触らない。
           # 今デプロイしたタグも、保持数の計算とは別に必ず除外する。
-          stale=$(curl -sS -H "Authorization: JWT ${jwt}" "${repo_url}/tags/?page_size=100" \
-            | jq -r --arg keep "$KEEP_TAGS" --arg current "$IMAGE_TAG" '
-              [.results[]? | select(.name | startswith("pr-") | not)]
-              | sort_by(.last_updated) | reverse
-              | .[($keep | tonumber):]
-              | .[].name
-              | select(. != $current)')
+          stale=$(echo "$tags" | jq -r --arg keep "$KEEP_TAGS" --arg current "$IMAGE_TAG" '
+            [.[] | select(.name | startswith("pr-") | not)]
+            | sort_by(.last_updated) | reverse
+            | .[($keep | tonumber):]
+            | .[].name
+            | select(. != $current)')
 
           if [ -z "$stale" ]; then
             echo "整理対象のタグなし（保持数: ${KEEP_TAGS}）"

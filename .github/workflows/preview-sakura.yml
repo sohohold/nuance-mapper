@@ -159,10 +159,16 @@ jobs:
         run: |
           # スケールゼロからの復帰に9秒前後かかるうえ、バージョンが健全と判定される
           # までにも時間がある。1回のcurlで判断せず繰り返す。
+          #
+          # 切り替え中は旧バージョンが応答し続ける（状態が「処理中」でもリクエストは
+          # インスタンスに到達する）。応答があることだけを条件にすると、2回目以降の
+          # デプロイで旧リビジョンを掴んだ時点で抜けてしまうので、期待する
+          # リビジョンが出るまで待つ。
+          revision=""
           for i in $(seq 1 30); do
             body=$(curl -sS --max-time 60 "${URL}/api/health" || true)
             revision=$(echo "$body" | jq -r '.revision // empty' 2>/dev/null || true)
-            [ -n "$revision" ] && break
+            [ "$revision" = "$EXPECTED_REVISION" ] && break
             sleep 10
           done
 

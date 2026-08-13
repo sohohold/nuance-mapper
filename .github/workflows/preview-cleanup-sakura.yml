@@ -88,8 +88,21 @@ jobs:
           fi
 
           repo_url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
-          tags=$(curl -sS -H "Authorization: JWT ${jwt}" "${repo_url}/tags/?page_size=100" \
-            | jq -r --arg p "pr-${PR_NUMBER}-" '.results[]? | select(.name | startswith($p)) | .name')
+
+          # 全ページ集めてから絞る。1ページ目しか見ないと、タグが100件を超えたとき
+          # このPRのタグが後続ページに残って消し漏れる。
+          all="[]"
+          next="${repo_url}/tags/?page_size=100"
+          for _ in $(seq 1 20); do
+            [ -z "$next" ] && break
+            page=$(curl -sS -H "Authorization: JWT ${jwt}" "$next")
+            all=$(jq -c -n --argjson acc "$all" --argjson page "$page" \
+              '$acc + ($page.results // [])')
+            next=$(echo "$page" | jq -r '.next // empty')
+          done
+
+          tags=$(echo "$all" | jq -r --arg p "pr-${PR_NUMBER}-" \
+            '.[] | select(.name | startswith($p)) | .name')
 
           if [ -z "$tags" ]; then
             echo "削除対象のタグなし"
