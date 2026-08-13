@@ -8,7 +8,7 @@
 | [`../workflows/preview-sakura.yml`](../workflows/preview-sakura.yml) | ビルド → push → デプロイ → 検証 → PRへ報告 |
 | [`../workflows/preview-cleanup-sakura.yml`](../workflows/preview-cleanup-sakura.yml) | AppRunアプリとDocker Hubタグの削除、Deploymentの無効化 |
 | [`../scripts/dockerhub.sh`](../scripts/dockerhub.sh) | Docker Hub APIのタグ操作（3つのワークフローで共用） |
-| [`../scripts/apprun-secrets.sh`](../scripts/apprun-secrets.sh) | LLM・Redis・Basic認証の機密値をAppRunのsecretへ同期 |
+| [`../scripts/apprun-secrets.sh`](../scripts/apprun-secrets.sh) | プレビューではBasic認証、本番ではLLM・Redisの機密値をAppRunのsecretへ同期 |
 
 本番デプロイ（`terraform/apprun`）とは別系統です。本番はTerraform、プレビューはapprun-cliで、stateを共有しません。
 
@@ -35,15 +35,15 @@ Settings → Secrets and variables → Actions → Repository secrets に2つ追
 
 登録後は値を読み出せません。プレビューを開くときにブラウザの認証ダイアログへ入力するので、控えておいてください。
 
-### 2. 既存のSecretsとVariableを流用する
+### 2. デプロイ用SecretsとVariableを流用する
 
-`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `SAKURA_ACCESS_TOKEN` / `SAKURA_ACCESS_TOKEN_SECRET` は本番デプロイと共通です。LLMのAPIキーとUpstashの認証情報も、登録済みのものがプレビューへ渡ります（未登録なら省かれ、アプリはモックデータを返します）。
+`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `SAKURA_ACCESS_TOKEN` / `SAKURA_ACCESS_TOKEN_SECRET` は本番デプロイと共通ですが、信頼済みのbase branch workflow内でDocker HubへのpushとAppRun API操作だけに使い、PRイメージの環境変数には設定しません。
 
-Repository variable `APPRUN_SECRET_VERSION` も本番と共用します。LLM APIキー、Upstash認証情報、Basic認証パスワードをローテーションしたらこの値を増やしてください。
+LLMのAPIキーとUpstashの認証情報はプレビューへ渡しません。PRコードは任意の通信やrouteを実装でき、アプリ内のBasic認証ではシークレット流出を防ぐ信頼境界にならないためです。プレビューの生成APIはモックデータを返します。
+
+Repository variable `APPRUN_SECRET_VERSION` も本番と共用します。Basic認証パスワードをローテーションしたらこの値を増やしてください。
 
 既存Previewではデプロイ前にsecretを同期してから同じ版番号をCLIへ渡します。新規作成または非Healthyで事前同期を延期した場合は、デプロイ後の同期を強制するため、版番号だけが先に進んで古いsecret値を同期済みと誤認することはありません。
-
-本番と別のキーを使いたい場合は、`preview-sakura.yml` の `Deploy to AppRun` ステップの `env` を差し替えてください。
 
 ## 使い方
 
@@ -62,13 +62,14 @@ PRを作ると `nuance-mapper-pr-<PR番号>` というAppRunアプリが作ら�
 | イメージ参照 | digest（`@sha256:...`） | AppRunのバージョンは構成情報のスナップショットで、参照文字列が変わらないと新しいバージョンが作られない。digestなら取り違えが原理的に起きない |
 | デプロイ手段 | apprun-cli | PRごとのTerraform stateを作って壊す手間が要らない |
 | ビルドキャッシュ | `type=gha,mode=max` | レジストリキャッシュはDocker Hub無料枠の2GiBを圧迫する |
-| アクセス制限 | fail-closedなアプリ層のBasic認証 | AppRunにVercelのDeployment Protection相当の機能がない。パスワード同期前は503、同期後はBasic認証で保護する |
+| workflowの信頼境界 | `pull_request_target`のbase branch | PRコードをbuild contextに限定し、PRがデプロイ定義やシークレット同期処理を書き換えられないようにする |
+| アクセス制限 | fail-closedなアプリ層のBasic認証 | AppRunにVercelのDeployment Protection相当の機能がない。パスワード同期前は503、同期後はBasic認証で保護する。ただし本番資格情報の保護には使わない |
 
-デプロイ後に2つ検証しています。`/api/health` の `revision` が期待するコミットSHAと一致すること（古いイメージが動いていないか）と、`GET /` が401を返すこと（保護されているか）。どちらかが崩れていればワークフローを失敗させます。
+デプロイ後に、`/api/health` の `revision` が期待するコミットSHAと一致すること（古いイメージが動いていないか）、`GET /` と `POST /api/generate` がどちらも401を返すことを検証します。いずれかが崩れていればプレビューアプリを削除します。
 
 ## 制限
 
-- **forkからのPRでは動きません。** `pull_request` イベントではSecretsが渡らないため、認証情報チェックで停止します。`pull_request_target` は任意コード実行につながるので使っていません
+- **forkからのPRでは動きません。** job条件で同一リポジトリのPRだけに限定しています。`pull_request_target`を使いますが、PR checkoutは資格情報を残さない独立ディレクトリへ置き、実行対象にはせずDocker build contextとしてだけ扱います
 - 同時に5本目のPRを開いた場合はAppRun上限により作成できません。古いプレビューを勝手に消さず、capacity checkで失敗します
 - 削除は取りこぼす可能性があります。上限が5しかないので、定期的に `apprun-cli list` で `nuance-mapper-pr-` から始まるアプリを確認してください
 - Docker Hubの無料プランはprivateリポジトリ1つ・2GiBまでです。同じPRへのpushで増える古いタグはデプロイ成功のたびに整理し、PRを閉じた時点で残りを削除しますが、クリーンアップ自体が失敗した場合はタグが残ります

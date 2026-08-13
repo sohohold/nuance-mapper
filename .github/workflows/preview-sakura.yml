@@ -4,7 +4,9 @@ name: Deploy Preview to Sakura AppRun
 # AppRunのアプリ数上限はプロジェクトあたり5で、本番が1つ使うため、同時に
 # 持てるプレビューは最大4本。5本目はcapacity checkで明示的に失敗させる。
 on:
-  pull_request:
+  # workflowとデプロイ定義は必ずbase branchの信頼済み版を使う。PRのコードは
+  # preview-source以下へ資格情報を残さずcheckoutし、Docker build contextとしてのみ扱う。
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -35,8 +37,16 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # pull_request_targetではbase branchを取得する。以降のAppRun定義とscriptsは
+      # この信頼済みcheckoutから実行し、PRによる書き換えを許さない。
+      - uses: actions/checkout@v6
+
+      # PRコードは独立したbuild contextへ置く。checkout用tokenを残さず、後続の
+      # Docker buildにもActionsやAppRunの資格情報を渡さない。
       - uses: actions/checkout@v6
         with:
+          path: preview-source
+          persist-credentials: false
           # マージ結果ではなくPRのHEADそのものをビルドする。
           # /api/health が返す revision をこのSHAと突き合わせて検証するため、
           # ビルド対象とSHAが一致している必要がある。
@@ -113,15 +123,9 @@ jobs:
         env:
           APP_NAME: ${{ steps.names.outputs.app_name }}
           APPRUN_SECRET_SYNC_DEFER_IF_UNHEALTHY: "true"
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
         run: bash .github/scripts/apprun-secrets.sh
 
       - uses: docker/setup-buildx-action@v3
@@ -141,7 +145,7 @@ jobs:
           # deps/builder 段まで再利用できる。
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          context: .
+          context: ./preview-source
           platforms: linux/amd64
           push: true
           tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPO }}:${{ steps.names.outputs.tag }}
@@ -150,20 +154,14 @@ jobs:
         id: deploy
         env:
           APPRUN_CLI_APP: .github/apprun/preview.jsonnet
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PREVIEW_APP_NAME: ${{ steps.names.outputs.app_name }}
           PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
           PREVIEW_BASIC_AUTH_USER: ${{ secrets.PREVIEW_BASIC_AUTH_USER }}
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
         run: |
           # digestが空のまま進むと `...@` という参照でデプロイしようとして、
           # 原因の分かりにくいエラーになる。
@@ -176,7 +174,7 @@ jobs:
 
           # apprun-cli v0.8.1はcomponents[].secretに未対応。通常envには非機密な
           # Basic認証ユーザー名、認証必須フラグ、ローテーション版番号だけを入れ、
-          # 機密値は直後に公式APIで同期する。認証必須フラグは初期版から有効なので、
+          # Basic認証パスワードは直後に公式APIで同期する。認証必須フラグは初期版から有効なので、
           # パスワード同期までの間や同期失敗時もproxyが503でfail-closedにする。
           PREVIEW_ENV_JSON=$(jq -n -c '
             [
@@ -207,15 +205,9 @@ jobs:
         env:
           APP_NAME: ${{ steps.names.outputs.app_name }}
           APPRUN_SECRET_SYNC_FORCE: ${{ steps.secrets-before.outputs.deferred }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
         run: bash .github/scripts/apprun-secrets.sh
 
       - name: Verify the deployment
