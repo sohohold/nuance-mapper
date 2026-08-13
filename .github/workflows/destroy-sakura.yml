@@ -64,7 +64,7 @@ jobs:
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          TF_VAR_image_namespace: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.DOCKERHUB_TOKEN }}
         run: terraform destroy -auto-approve

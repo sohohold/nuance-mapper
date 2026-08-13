@@ -10,21 +10,48 @@ variable "app_name" {
   default     = "nuance-mapper"
 }
 
-# ── コンテナレジストリ ──
+# ── コンテナイメージ ──
+# AppRunはさくらのコンテナレジストリのほか、Docker Hub と GitHub Container Registry
+# からのデプロイに対応している（マニュアル「技術概要」の コンポーネント制限 を参照）。
+# レジストリの月額を避けるため Docker Hub を使う。
 
-variable "registry_subdomain_label" {
-  description = "コンテナレジストリのFQDNサブドメイン部分（<label>.sakuracr.jp）。さくらのクラウド全体で一意である必要がある"
+variable "image_registry_server" {
+  description = "コンテナレジストリのホスト名。Docker Hubは `docker.io` のみ受け付ける（`index.docker.io` などはコントロールパネルのバリデーションで弾かれる）"
   type        = string
+  default     = "docker.io"
+}
+
+variable "image_namespace" {
+  description = "イメージの名前空間。Docker Hubの個人アカウントではユーザー名と同じ"
+  type        = string
+}
+
+variable "image_repository" {
+  description = "イメージのリポジトリ名"
+  type        = string
+  default     = "nuance-mapper"
+}
+
+variable "image_tag" {
+  description = <<-EOT
+    デプロイするイメージのタグ（通常はgitのコミットSHA）。
+    `sha256:...` を渡すとdigest指定になる。
+
+    タグは必ず一意にすること。AppRunのバージョンは構成情報のスナップショットであり、
+    イメージ参照文字列が変わらなければ、レジストリ側で同じタグを上書きしても
+    新しいバージョンは作成されない（pushは成功するのにデプロイされない）。
+  EOT
+  type        = string
+  default     = "latest"
 }
 
 variable "registry_username" {
-  description = "コンテナレジストリ(docker login)用ユーザー名"
+  description = "レジストリの認証ユーザー名。Docker Hubのユーザー名"
   type        = string
-  default     = "ci"
 }
 
 variable "registry_password" {
-  description = "コンテナレジストリ(docker login)用パスワード"
+  description = "レジストリの認証パスワード。Docker HubではPersonal Access Token（read権限で足りる）"
   type        = string
   sensitive   = true
 }
@@ -36,12 +63,6 @@ variable "registry_password_version" {
 }
 
 # ── AppRun ──
-
-variable "image_tag" {
-  description = "デプロイするコンテナイメージのタグ（通常はgitのコミットSHA）"
-  type        = string
-  default     = "latest"
-}
 
 variable "max_cpu" {
   description = "1インスタンスあたりの最大CPU (0.5 / 1 / 2 のいずれか)"

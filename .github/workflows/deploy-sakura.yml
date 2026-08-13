@@ -67,37 +67,20 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: terraform init -backend-config=backend.hcl
 
-      - name: Terraform apply (registry only)
-        # 初回実行時、コンテナレジストリはまだ存在しないため docker push より先に作る。
-        # 2回目以降はすでに存在するので実質no-op。
-        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Log in to Docker Hub
         env:
-          SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
-          SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          terraform apply -auto-approve -target=sakura_container_registry.main
-
-      - name: Log in to Sakura Container Registry
-        env:
-          REGISTRY_PASSWORD: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
-          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          REGISTRY_USERNAME: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-        run: |
-          echo "$REGISTRY_PASSWORD" | docker login \
-            "${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp" \
-            -u "$REGISTRY_USERNAME" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | docker login \
+            -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Build and push image
         env:
-          REGISTRY_SUBDOMAIN_LABEL: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
-          IMAGE="${REGISTRY_SUBDOMAIN_LABEL}.sakuracr.jp/nuance-mapper:${IMAGE_TAG}"
+          IMAGE="docker.io/${DOCKERHUB_USERNAME}/nuance-mapper:${IMAGE_TAG}"
           # BUILD_REVISION は /api/health が返す。稼働中のインスタンスが
           # どのビルドかを外から確認できるようにするためのもの。
           docker build --build-arg "BUILD_REVISION=${IMAGE_TAG}" -t "$IMAGE" .
@@ -110,9 +93,9 @@ jobs:
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-          TF_VAR_registry_subdomain_label: ${{ secrets.SAKURA_REGISTRY_SUBDOMAIN_LABEL }}
-          TF_VAR_registry_username: ${{ secrets.SAKURA_REGISTRY_USERNAME }}
-          TF_VAR_registry_password: ${{ secrets.SAKURA_REGISTRY_PASSWORD }}
+          TF_VAR_image_namespace: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_registry_password: ${{ secrets.DOCKERHUB_TOKEN }}
           TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_cerebras_api_key: ${{ secrets.CEREBRAS_API_KEY }}

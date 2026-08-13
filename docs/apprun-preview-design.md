@@ -128,9 +128,9 @@ AppRun には Vercel の Deployment Protection に相当する機能がない。
 
 ## 9. 実装順序
 
-1. Docker Hub をデプロイソースにできるか手動で確認（`server` の値の特定）
+1. ~~Docker Hub をデプロイソースにできるか手動で確認（`server` の値の特定）~~ 完了
 2. ~~`/api/health` 追加 + 認証（`src/proxy.ts`）+ 本番 probe パスの変更~~ 完了
-3. 本番を Docker Hub に切り替え（`terraform/apprun`）
+3. ~~本番を Docker Hub に切り替え（`terraform/apprun`）~~ 完了（未適用。適用時の注意は [apprun/README.md](../terraform/apprun/README.md) の「さくらのコンテナレジストリからの移行」を参照）
 4. `preview-sakura.yml`（ラベル起動、build → push → apprun-cli deploy → コメント/Deployments）
 5. `preview-cleanup-sakura.yml`（PR closed でアプリ・タグ削除）
 6. 週次棚卸し cron

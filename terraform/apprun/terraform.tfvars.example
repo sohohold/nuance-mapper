@@ -2,24 +2,31 @@
 #   cp terraform.tfvars.example terraform.tfvars
 # terraform.tfvars は .gitignore 済み（秘密情報を含むためコミットしない）
 
-# 必須: コンテナレジストリのFQDNサブドメイン（さくら全体で一意。例: myname-nuance-mapper）
-registry_subdomain_label = "your-unique-label"
+# 必須: イメージの名前空間（Docker Hubの個人アカウントではユーザー名と同じ）
+image_namespace = "your-dockerhub-username"
 
-# 必須: レジストリのパスワード（自分で決める。docker login に使う）
-registry_password = "choose-a-strong-password"
+# 必須: レジストリの認証情報
+# Docker HubのPersonal Access Token（read権限で足りる）
+registry_username = "your-dockerhub-username"
+registry_password = "dckr_pat_..."
 
-# パスワードをローテーションするときは、値を変えるだけでなく
+# トークンをローテーションするときは、値を変えるだけでなく
 # registry_password_version も必ず増やすこと(write-only属性は値ではなく
 # このバージョン番号の変化で更新を検知するため)
 # registry_password_version = 1
 
 # 任意
-# registry_username = "ci"
-# zone              = "is1b"
-# max_cpu           = "0.5"
-# max_memory        = "1Gi"
-# max_scale         = 2
-# image_tag         = "latest"
+# image_registry_server = "docker.io"
+# image_repository      = "nuance-mapper"
+# zone                  = "is1b"
+# max_cpu               = "0.5"
+# max_memory            = "1Gi"
+# max_scale             = 2
+
+# デプロイするイメージ。タグまたは digest を指定する。
+# タグは必ず一意にすること（同じタグを上書きしても新しいバージョンは作られない）。
+# image_tag = "a4eb065"
+# image_tag = "sha256:3d78fd00a7c78463a7128d23a869264d62a9192378033368fd2657ac4d4bae9d"
 
 # 任意: LLM プロバイダのAPIキー（未設定ならモックデータで動作）
 # gemini_api_key     = ""
