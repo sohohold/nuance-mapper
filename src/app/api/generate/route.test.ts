@@ -341,6 +341,7 @@ describe("POST /api/generate — generation", () => {
   it("streams the generated items as SSE", async () => {
     const res = await POST(request(VALID_BODY));
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(await readSSE(res)).toEqual(GOOD_ITEMS);
   });
 
