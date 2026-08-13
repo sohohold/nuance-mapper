@@ -6,7 +6,8 @@
 | --- | --- |
 | [`preview.jsonnet`](./preview.jsonnet) | apprun-cli に渡すアプリ定義 |
 | [`../workflows/preview-sakura.yml`](../workflows/preview-sakura.yml) | ビルド → push → デプロイ → 検証 → PRへ報告 |
-| [`../workflows/preview-cleanup-sakura.yml`](../workflows/preview-cleanup-sakura.yml) | AppRunアプリとDocker Hubタグの削除 |
+| [`../workflows/preview-cleanup-sakura.yml`](../workflows/preview-cleanup-sakura.yml) | AppRunアプリとDocker Hubタグの削除、Deploymentの無効化 |
+| [`../scripts/dockerhub.sh`](../scripts/dockerhub.sh) | Docker Hub APIのタグ操作（3つのワークフローで共用） |
 
 本番デプロイ（`terraform/apprun`）とは別系統です。本番はTerraform、プレビューはapprun-cliで、stateを共有しません。
 
@@ -68,4 +69,4 @@ PRに `preview` ラベルを付けると `nuance-mapper-pr-<PR番号>` という
 
 - **forkからのPRでは動きません。** `pull_request` イベントではSecretsが渡らないため、認証情報チェックで停止します。`pull_request_target` は任意コード実行につながるので使っていません
 - 削除は取りこぼす可能性があります。上限が5しかないので、定期的に `apprun-cli list` で `nuance-mapper-pr-` から始まるアプリを確認してください
-- Docker Hubの無料プランはprivateリポジトリ1つ・2GiBまでです。クリーンアップが失敗した場合はタグが残ります
+- Docker Hubの無料プランはprivateリポジトリ1つ・2GiBまでです。同じPRへのpushで増える古いタグはデプロイ成功のたびに整理し、PRを閉じた時点で残りを削除しますが、クリーンアップ自体が失敗した場合はタグが残ります

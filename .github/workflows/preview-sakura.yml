@@ -186,6 +186,38 @@ jobs:
 
           echo "revision=${revision} / 認証あり" >> "$GITHUB_STEP_SUMMARY"
 
+      # pushのたびに pr-<番号>-<リビジョン> が増える。PRを閉じるまで放置すると、
+      # 長寿命のPRだけでDocker Hub無料枠(private 2GiB)を圧迫しうる。
+      # 稼働確認が済んだ後に、このPRの古いタグを消す。AppRunはdigestで参照しており、
+      # いま配っているタグは残すので、稼働中のイメージには影響しない。
+      - name: Prune superseded preview tags
+        env:
+          CURRENT_TAG: ${{ steps.names.outputs.tag }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          source .github/scripts/dockerhub.sh
+
+          jwt=$(dockerhub_login)
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hubへのログインに失敗したのでタグを整理できません"
+            exit 0
+          fi
+
+          repo="${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
+          stale=$(dockerhub_tags "$jwt" "$repo" \
+            | jq -r --arg p "pr-${PR_NUMBER}-" --arg current "$CURRENT_TAG" '
+              .[] | select(.name | startswith($p)) | .name | select(. != $current)')
+
+          if [ -z "$stale" ]; then
+            echo "整理対象のタグなし"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
+          dockerhub_delete_tags "$jwt" "$repo" $stale
+
       - name: Report to the pull request
         uses: actions/github-script@v8
         env:

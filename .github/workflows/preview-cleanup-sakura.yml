@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  deployments: write
   pull-requests: write
 
 # 作成ワークフローと同じgroup。cancel-in-progress: false なので、デプロイ中に
@@ -77,43 +78,48 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          jwt=$(curl -sS -X POST https://hub.docker.com/v2/users/login/ \
-            -H 'Content-Type: application/json' \
-            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
-              '{username: $u, password: $p}')" | jq -r '.token // empty')
+          source .github/scripts/dockerhub.sh
 
+          jwt=$(dockerhub_login)
           if [ -z "$jwt" ]; then
             echo "::warning::Docker Hubへのログインに失敗したのでタグを削除できません"
             exit 0
           fi
 
-          repo_url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
-
-          # 全ページ集めてから絞る。1ページ目しか見ないと、タグが100件を超えたとき
-          # このPRのタグが後続ページに残って消し漏れる。
-          all="[]"
-          next="${repo_url}/tags/?page_size=100"
-          for _ in $(seq 1 20); do
-            [ -z "$next" ] && break
-            page=$(curl -sS -H "Authorization: JWT ${jwt}" "$next")
-            all=$(jq -c -n --argjson acc "$all" --argjson page "$page" \
-              '$acc + ($page.results // [])')
-            next=$(echo "$page" | jq -r '.next // empty')
-          done
-
-          tags=$(echo "$all" | jq -r --arg p "pr-${PR_NUMBER}-" \
-            '.[] | select(.name | startswith($p)) | .name')
+          repo="${DOCKERHUB_USERNAME}/${IMAGE_REPO}"
+          tags=$(dockerhub_tags "$jwt" "$repo" \
+            | jq -r --arg p "pr-${PR_NUMBER}-" '.[] | select(.name | startswith($p)) | .name')
 
           if [ -z "$tags" ]; then
             echo "削除対象のタグなし"
             exit 0
           fi
 
-          for tag in $tags; do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
-              -H "Authorization: JWT ${jwt}" "${repo_url}/tags/${tag}/")
-            echo "delete ${tag} -> ${code}"
-          done
+          # shellcheck disable=SC2086
+          dockerhub_delete_tags "$jwt" "$repo" $tags
+
+      # 環境を消したことをGitHub側にも反映する。これをしないと、PRのタイムラインと
+      # Environments画面が、削除済みのアプリを指すURLを有効なものとして出し続ける。
+      - name: Deactivate the deployment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const environment = `preview-pr-${context.payload.pull_request.number}`;
+
+            const deployments = await github.paginate(
+              github.rest.repos.listDeployments,
+              { owner, repo, environment },
+            );
+
+            for (const deployment of deployments) {
+              await github.rest.repos.createDeploymentStatus({
+                owner, repo,
+                deployment_id: deployment.id,
+                state: "inactive",
+                description: "プレビュー環境を削除しました",
+              });
+            }
 
       - name: Report to the pull request
         if: steps.delete.outputs.deleted == 'true'
