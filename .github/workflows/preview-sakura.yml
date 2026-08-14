@@ -1,11 +1,8 @@
 name: Deploy Preview to Sakura AppRun
 
-# 同一リポジトリのPRごとにプレビュー環境を自動作成する。
-# AppRunのアプリ数上限はプロジェクトあたり5で、本番が1つ使うため、同時に
-# 持てるプレビューは最大4本。5本目はcapacity checkで明示的に失敗させる。
+# 同一リポジトリのPRごとにプレビューを作成する。同時作成数は最大4件。
 on:
-  # workflowとデプロイ定義は必ずbase branchの信頼済み版を使う。PRのコードは
-  # preview-source以下へ資格情報を残さずcheckoutし、Docker build contextとしてのみ扱う。
+  # workflowはbase branch版を使い、PRコードは資格情報なしのbuild contextに限定する。
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -15,14 +12,13 @@ permissions:
   issues: write
   pull-requests: write
 
-# PRごとに直列化する。新しいpushが来たら古いビルドは打ち切ってよい。
-# 削除ワークフローも同じgroupを使い、作成中のアプリを消さないようにしている。
+# PR単位で作成と削除を直列化し、新しいpushでは古いビルドを中止する。
 concurrency:
   group: sakura-apprun-preview-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
-  # プロジェクト上限5 − 本番1。これを超えると新規プレビューは作れない。
+  # プロジェクト上限5件から本番1件を除いた数。
   MAX_PREVIEW_APPS: "4"
   PREVIEW_APP_PREFIX: nuance-mapper-pr-
   IMAGE_REPO: nuance-mapper
@@ -30,26 +26,21 @@ env:
 
 jobs:
   preview:
-    # forkのコードへrepository secretsを渡さない。Dependabotもpull_requestでは
-    # secretsを受け取れないため対象外にする。
+    # repository secretsを渡せないforkとDependabotのPRは対象外にする。
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      # pull_request_targetではbase branchを取得する。以降のAppRun定義とscriptsは
-      # この信頼済みcheckoutから実行し、PRによる書き換えを許さない。
+      # AppRun定義とスクリプトにはbase branch版を使用する。
       - uses: actions/checkout@v6
 
-      # PRコードは独立したbuild contextへ置く。checkout用tokenを残さず、後続の
-      # Docker buildにもActionsやAppRunの資格情報を渡さない。
+      # PRコードにはcheckout tokenやデプロイ資格情報を渡さない。
       - uses: actions/checkout@v6
         with:
           path: preview-source
           persist-credentials: false
-          # マージ結果ではなくPRのHEADそのものをビルドする。
-          # /api/health が返す revision をこのSHAと突き合わせて検証するため、
-          # ビルド対象とSHAが一致している必要がある。
+          # 検証するrevisionと一致させるため、PRのHEADを取得する。
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Resolve names
@@ -65,8 +56,7 @@ jobs:
             echo "tag=pr-${PR_NUMBER}-${REVISION}"
           } >> "$GITHUB_OUTPUT"
 
-      # 認証情報が無いままデプロイすると、プレビューが公開状態で外に出てしまう。
-      # src/proxy.ts は両方が揃っている時だけ認証をかける実装なので、ここで止める。
+      # 認証情報が不足した状態で公開しないよう、デプロイ前に確認する。
       - name: Require preview credentials
         env:
           PREVIEW_BASIC_AUTH_PASSWORD: ${{ secrets.PREVIEW_BASIC_AUTH_PASSWORD }}
@@ -77,8 +67,7 @@ jobs:
             exit 1
           fi
 
-      # version は必須。省略するとダウンロードURLのバージョン部分が空になり、
-      # tar が「not in gzip format」で落ちる（アクションのinputsは required: true）。
+      # versionを省略するとCLIのダウンロードに失敗する。
       - uses: fujiwara/apprun-cli@v0
         with:
           version: v0.8.1
@@ -89,14 +78,13 @@ jobs:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
         run: |
-          # 一覧を取れなければ空き枠を判断できない。取得失敗を「0件」と誤認すると
-          # 上限に達していても作成へ進んでしまうので、ここで止める。
+          # 一覧取得の失敗を0件として扱わず、作成可能数を判定できない場合は停止する。
           if ! apps=$(apprun-cli list); then
-            echo "::error::AppRunのアプリ一覧を取得できませんでした。空き枠を判断できないので中断します。"
+            echo "::error::AppRunのアプリ一覧を取得できませんでした。作成可能数を判断できないので中断します。"
             exit 1
           fi
 
-          # list は1行1オブジェクトのJSONを流すので -s でまとめる
+          # 1行1オブジェクトの出力を配列に変換する。
           if ! names=$(printf '%s' "$apps" | jq -s --arg p "$PREVIEW_APP_PREFIX" \
             '[.[] | select(.name | startswith($p)) | .name]'); then
             echo "::error::AppRunのアプリ一覧を解釈できませんでした。"
@@ -105,19 +93,17 @@ jobs:
           echo "既存のプレビュー: $names"
 
           if echo "$names" | jq -e --arg n "$APP_NAME" 'index($n)' > /dev/null; then
-            echo "このPRのアプリは既にあるので更新する（枠は消費しない）"
+            echo "このPRのアプリは既にあるため更新します（アプリ数は増えません）"
             exit 0
           fi
 
           count=$(echo "$names" | jq 'length')
           if [ "$count" -ge "$MAX_PREVIEW_APPS" ]; then
-            echo "::error::プレビュー環境の空きがありません（${count}/${MAX_PREVIEW_APPS}）。AppRunのアプリ数上限はプロジェクトあたり5で、本番が1つ使っています。不要なPRを閉じて枠を空けてください。"
+            echo "::error::プレビュー環境が上限に達しています（${count}/${MAX_PREVIEW_APPS}）。不要なPRを閉じてプレビューを削除してください。"
             exit 1
           fi
 
-      # 既存Previewのローテーションでは、CLIが新しい版番号を先に書くとpost-syncが
-      # 同じキー集合を見て古い値を同期済みと誤認する。deploy前に更新しておく。
-      # 新規作成またはUnHealthyなら延期し、post-syncを強制する出力を返す。
+      # 既存アプリのsecretを先に同期する。新規作成またはUnHealthyの場合は延期する。
       - name: Sync existing preview secrets before deploy
         id: secrets-before
         env:
@@ -140,9 +126,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           build-args: BUILD_REVISION=${{ steps.names.outputs.revision }}
-          # レジストリキャッシュはDocker Hub無料枠の2GiBを圧迫するので使わない。
-          # GitHub Actions Cache はリポジトリあたり10GBで、mode=max により
-          # deps/builder 段まで再利用できる。
+          # mode=maxで中間ステージもGitHub Actions Cacheへ保存する。
           cache-from: type=gha
           cache-to: type=gha,mode=max
           context: ./preview-source
@@ -163,8 +147,7 @@ jobs:
           SAKURA_ACCESS_TOKEN: ${{ secrets.SAKURA_ACCESS_TOKEN }}
           SAKURA_ACCESS_TOKEN_SECRET: ${{ secrets.SAKURA_ACCESS_TOKEN_SECRET }}
         run: |
-          # digestが空のまま進むと `...@` という参照でデプロイしようとして、
-          # 原因の分かりにくいエラーになる。
+          # 不正なイメージ参照でデプロイしないようdigestを確認する。
           if [ -z "$IMAGE_DIGEST" ]; then
             echo "::error::ビルドしたイメージのdigestを取得できませんでした"
             exit 1
@@ -172,10 +155,8 @@ jobs:
 
           export PREVIEW_IMAGE="docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO}@${IMAGE_DIGEST}"
 
-          # apprun-cli v0.8.1はcomponents[].secretに未対応。通常envには非機密な
-          # Basic認証ユーザー名、認証必須フラグ、ローテーション版番号だけを入れ、
-          # Basic認証パスワードは直後に公式APIで同期する。認証必須フラグは初期版から有効なので、
-          # パスワード同期までの間や同期失敗時もproxyが503でfail-closedにする。
+          # 通常envには非機密値だけを入れ、パスワードはデプロイ後にsecretへ同期する。
+          # 同期完了まではPREVIEW_AUTH_REQUIREDにより503を返す。
           PREVIEW_ENV_JSON=$(jq -n -c '
             [
               {key: "PREVIEW_BASIC_AUTH_USER",     value: $ENV.PREVIEW_BASIC_AUTH_USER},
@@ -185,13 +166,10 @@ jobs:
           export PREVIEW_ENV_JSON
 
           apprun-cli deploy
-          # URL取得など、この後の処理が失敗してもcleanup対象だと判別できるよう、
-          # AppRunへの反映が完了した時点で出力する。
+          # 以降の失敗時に削除できるよう、AppRunへの反映直後に記録する。
           echo "published=true" >> "$GITHUB_OUTPUT"
 
-          # `echo "url=$(apprun-cli url)"` と書くと、URL取得が失敗しても echo が
-          # 成功するため空のURLがそのまま後続へ流れ、検証ステップが的外れな
-          # エラーを出す。取得を分けて明示的に確認する。
+          # URL取得の終了状態と空値を個別に確認する。
           url=$(apprun-cli url)
           if [ -z "$url" ]; then
             echo "::error::デプロイ後の公開URLを取得できませんでした"
@@ -216,13 +194,8 @@ jobs:
           EXPECTED_REVISION: ${{ steps.names.outputs.revision }}
           URL: ${{ steps.deploy.outputs.url }}
         run: |
-          # スケールゼロからの復帰に9秒前後かかるうえ、バージョンが健全と判定される
-          # までにも時間がある。1回のcurlで判断せず繰り返す。
-          #
-          # 切り替え中は旧バージョンが応答し続ける（状態が「処理中」でもリクエストは
-          # インスタンスに到達する）。応答があることだけを条件にすると、2回目以降の
-          # デプロイで旧リビジョンを掴んだ時点で抜けてしまうので、期待する
-          # リビジョンが出るまで待つ。
+          # 起動とバージョン切り替えには時間がかかるため、期待revisionまで再試行する。
+          # 切り替え中は旧バージョンも応答するため、HTTP成功だけでは完了としない。
           check_gate() {
             label=$1
             mode=$2
@@ -253,11 +226,8 @@ jobs:
 
           revision=""
           for i in $(seq 1 30); do
-            # PRのコードは認証用proxy自体を変更できる。期待revisionを待ってから
-            # 認証を調べると、その間に無保護の版を公開し続けるため、各試行で先に
-            # 外側から確認する。ページだけでなく、実際にsecretを使うAPI境界もPOSTし、
-            # matcherからAPIだけが外された場合を検出する。401は同期済み、503は
-            # fail-closed中、502/504はAppRun切り替え中として待機する。
+            # PRはproxyを変更できるため、各試行でページとAPIの認証状態を確認する。
+            # 401はBasic認証が有効、503はsecret同期中、502/504は切り替え中として扱う。
             check_gate "GET /" transitional "${URL}/"
             check_gate "POST /api/generate" transitional \
               --request POST --header 'Content-Type: application/json' \
@@ -274,7 +244,6 @@ jobs:
             exit 1
           fi
 
-          # 切り替え完了後はページとsecret-backed APIの両方で401を必須にする。
           check_gate "GET /" required "${URL}/"
           check_gate "POST /api/generate" required \
             --request POST --header 'Content-Type: application/json' \
@@ -282,9 +251,8 @@ jobs:
 
           echo "revision=${revision} / 認証あり" >> "$GITHUB_STEP_SUMMARY"
 
-      # PR内のproxyは検証対象であって信頼境界にはできない。デプロイ後のsecret同期や
-      # 401検証が失敗した場合、workflowを失敗させるだけでは無保護のアプリが残る。
-      # 検証の直後にアプリごと退役させ、secret-backed APIを公開し続けないようにする。
+      # secret同期または認証検証に失敗した公開済みアプリは削除する。
+      # PR内のproxyは信頼境界として扱わない。
       - name: Retire a preview that was not verified
         if: >-
           always() &&
@@ -297,19 +265,15 @@ jobs:
         run: |
           echo "::warning::デプロイ後の処理に失敗したため、公開済みプレビューを削除します"
 
-          # checkoutしたPR内の定義には依存しない。deleteが読むのはnameだけなので、
-          # workflow側で最小の定義を作り、PRがpreview.jsonnetを変更・削除していても
-          # cleanupを実行できるようにする。
+          # PR内の定義に依存せず削除できるよう、最小の定義を生成する。
           cleanup_config="${RUNNER_TEMP}/apprun-preview-cleanup.jsonnet"
           printf '{ name: "%s" }\n' "$PREVIEW_APP_NAME" > "$cleanup_config"
           export APPRUN_CLI_APP="$cleanup_config"
 
           apprun-cli delete --force
 
-      # pushのたびに pr-<番号>-<リビジョン> が増える。PRを閉じるまで放置すると、
-      # 長寿命のPRだけでDocker Hub無料枠(private 2GiB)を圧迫しうる。
-      # 稼働確認が済んだ後に、このPRの古いタグを消す。AppRunはdigestで参照しており、
-      # いま配っているタグは残すので、稼働中のイメージには影響しない。
+      # 検証後に同じPRの旧タグを削除し、現在のタグだけを残す。
+      # AppRunはdigest参照のため、稼働中のイメージには影響しない。
       - name: Prune superseded preview tags
         env:
           CURRENT_TAG: ${{ steps.names.outputs.tag }}
@@ -373,7 +337,7 @@ jobs:
               description: `revision ${REVISION}`,
             });
 
-            // Vercel botと同様、pushのたびに同じコメントを最新URL・revisionへ更新する。
+            // 同じコメントを最新のURLとrevisionへ更新する。
             const marker = "<!-- sakura-apprun-preview -->";
             const body = [
               marker,

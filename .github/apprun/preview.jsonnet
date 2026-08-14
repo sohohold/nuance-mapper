@@ -1,9 +1,5 @@
-// PRごとのプレビュー環境のAppRunアプリ定義（apprun-cli 用）。
-// 値はすべて環境変数から受け取る。使う側は .github/workflows/preview-sakura.yml。
-//
-// 本番（terraform/apprun）とは別のアプリとして作る。AppRunの公開URLはアプリ単位で
-// 発行され、バージョン単位のURLは存在しないため、隔離されたプレビューを作る方法は
-// 「アプリごと作って捨てる」以外にない。
+// PRごとに独立したAppRunアプリを作成する。値は環境変数から受け取る。
+// AppRunはバージョン単位のURLを発行しないため、プレビューごとにアプリが必要になる。
 local must_env = std.native('must_env');
 
 local name = must_env('PREVIEW_APP_NAME');
@@ -11,9 +7,7 @@ local name = must_env('PREVIEW_APP_NAME');
 {
   name: name,
   port: 3000,
-  // 本番と同じ理由で180秒（AppRunの上限は300秒）。
   timeout_seconds: 180,
-  // アイドル時は課金されない。復帰に9秒前後かかるが、プレビューでは許容する。
   min_scale: 0,
   max_scale: 1,
 
@@ -24,24 +18,18 @@ local name = must_env('PREVIEW_APP_NAME');
 
     deploy_source: {
       container_registry: {
-        // digest 指定。AppRunのバージョンは構成情報のスナップショットなので、
-        // 参照文字列が変わらないと新しいバージョンが作られない。digestなら
-        // 中身が変われば必ず文字列も変わるため、その失敗が原理的に起きない。
+        // AppRunに構成変更を認識させるため、イメージをdigestで指定する。
         image: must_env('PREVIEW_IMAGE'),
-        // 認証に使うホスト名はイメージ参照のプレフィックスとは別物。
-        // Docker Hubでは index.docker.io を指定する。docker.io を送ると
-        // APIが 400 Validation Error を返す（本番で実際に踏んだ）。
+        // Docker Hubの認証先にはindex.docker.ioが必要。docker.ioではAPIが400を返す。
         server: 'index.docker.io',
         username: must_env('DOCKERHUB_USERNAME'),
         password: must_env('DOCKERHUB_TOKEN'),
       },
     },
 
-    // 空値を除いた環境変数の配列。組み立てはワークフロー側（jq）で行う。
     env: std.parseJson(must_env('PREVIEW_ENV_JSON')),
 
-    // `/` はプレビューのBasic認証（src/proxy.ts）が401を返すため使えない。
-    // /api/health は認証の matcher から除外してある。
+    // `/` はBasic認証で401を返すため、認証対象外のhealth routeを使用する。
     probe: {
       http_get: {
         path: '/api/health',

@@ -1,9 +1,6 @@
 name: Deploy to Sakura AppRun
 
-# main への push (PRのmergeを含む) で自動デプロイする。
-# レジストリをDocker Hubへ移したことで常設リソースの課金が無くなり、AppRun自体も
-# min_scale=0 でアイドル時は課金されないため、常時追従させても費用が増えない。
-# 任意のタグをデプロイしたい場合や切り戻しのために手動起動も残す。
+# mainへのpushで自動デプロイし、手動実行では既存タグへの切り戻しに対応する。
 on:
   push:
     branches: [main]
@@ -17,9 +14,7 @@ on:
 permissions:
   contents: read
 
-# deploy/destroy が同じ Terraform state(terraform/apprun)を同時に触らないよう直列化する。
-# B2のS3互換APIではネイティブロック(use_lockfile)の動作を保証できないため、
-# GitHub Actions側のconcurrencyで確実に守る。
+# B2ではuse_lockfileを利用しないため、同一stateへの操作をconcurrencyで直列化する。
 concurrency:
   group: sakura-apprun-terraform
   cancel-in-progress: false
@@ -36,14 +31,12 @@ jobs:
 
       - name: Determine image tag
         id: vars
-        # inputs.image_tag はユーザー入力なので、${{ }} でスクリプトに直接展開せず
-        # env経由でシェル変数として渡す(シェルインジェクション対策)
+        # ユーザー入力はシェルへ直接展開せず、環境変数で渡す。
         env:
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
         run: |
           if [ -n "$IMAGE_TAG_INPUT" ]; then
-            # 既存タグの指定は切り戻し。ここでビルドすると、チェックアウト中の
-            # ソースを指定タグへ上書きしてしまい、戻したいイメージが失われる。
+            # 既存タグへの切り戻しでは新しいイメージをビルドしない。
             echo "tag=$IMAGE_TAG_INPUT"
             echo "build=false"
           else
@@ -80,10 +73,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
         run: terraform init -backend-config=backend.hcl
 
-      # provider v3.12.7はcomponents[].secretに未対応。既存アプリではapplyより先に
-      # 移行することで、Terraformのrefreshが通常envから消えた機密値をstateへ反映する。
-      # アプリがまだ存在しない場合は安全にスキップし、apply後の同じ処理で設定する。
-      # 既存アプリがUnHealthyなら同期を延期し、ロールバックや修正デプロイを妨げない。
+      # apply前に機密値をsecretへ移し、Terraform stateから通常envの値を除く。
+      # 新規作成またはUnHealthyの場合はapply後まで延期する。
       - name: Sync AppRun secrets before apply
         id: secrets-before
         env:
@@ -116,8 +107,7 @@ jobs:
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
           IMAGE="docker.io/${DOCKERHUB_USERNAME}/nuance-mapper:${IMAGE_TAG}"
-          # BUILD_REVISION は /api/health が返す。稼働中のインスタンスが
-          # どのビルドかを外から確認できるようにするためのもの。
+          # /api/healthで稼働中のビルドを確認するため、revisionを埋め込む。
           docker build --build-arg "BUILD_REVISION=${IMAGE_TAG}" -t "$IMAGE" .
           docker push "$IMAGE"
 
@@ -136,14 +126,12 @@ jobs:
         run: |
           terraform apply -auto-approve -var="image_tag=${IMAGE_TAG}"
 
-      # 新規作成時はpre-applyで対象が存在しないため、ここで初めてsecretを設定する。
-      # 既存アプリでは版番号とキー集合が一致し、API更新なしで終了する。
+      # 新規作成時と延期時のsecret同期を完了する。
       - name: Sync AppRun secrets after apply
         env:
           APP_NAME: nuance-mapper
           APP_SECRET_VERSION: ${{ vars.APPRUN_SECRET_VERSION }}
-          # pre-syncが新規作成またはUnHealthyで延期された場合、applyが版番号だけを
-          # 更新していても古いsecretを同期済みと誤認しないよう強制する。
+          # apply前に延期した場合は、版番号にかかわらず強制同期する。
           APPRUN_SECRET_SYNC_FORCE: ${{ steps.secrets-before.outputs.deferred }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -200,10 +188,8 @@ jobs:
             NormalizeAE: "1"
           }}')
 
-          # 有効中のサイトへ設定変更を送るとAPIは412を返す。通常のデプロイでは
-          # AppRunアプリID（＝オリジンFQDN）は変わらないため、まず現値を比較し、
-          # 同じなら設定変更自体を省略する。再作成でFQDNが変わった場合だけ一時的に
-          # 無効化して更新する。更新失敗時も旧設定を再有効化するようtrapを置く。
+          # 有効中のサイト設定変更は412になる。オリジン変更時だけ一時無効化し、
+          # 失敗時も再有効化する。
           site=$(curl --fail-with-body --silent --show-error \
             --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
             "$api_root/site/$WEBACCEL_SITE_ID")
@@ -225,8 +211,7 @@ jobs:
                 "$api_root/site/$WEBACCEL_SITE_ID/status" >/dev/null
             }
 
-            # 更新中に失敗しても、終了時に固定URLを再有効化する。既にdisabledなら
-            # 同値更新が412になるため、無効化リクエスト自体を省略する。
+            # 既に無効なら、412になる同値更新を省略する。
             trap enable_site_best_effort EXIT
             if [ "$current_status" != "disabled" ]; then
               curl --fail-with-body --silent --show-error \
@@ -248,7 +233,7 @@ jobs:
             echo "WebAccel origin is already current: $current_origin"
           fi
 
-          # ステータスAPIも同値更新には412を返すため、無効なときだけ有効化する。
+          # ステータスの同値更新も412になるため、無効な場合だけ有効化する。
           if [ "$current_status" != "enabled" ]; then
             curl --fail-with-body --silent --show-error \
               --user "$SAKURA_ACCESS_TOKEN:$SAKURA_ACCESS_TOKEN_SECRET" \
@@ -270,9 +255,7 @@ jobs:
             exit 1
           fi
 
-          # Next.jsの静的HTMLはs-maxage=31536000を返し、WebAccelはオリジンの
-          # キャッシュ期間を尊重する。期待revisionが実際にWebAccel経由で見えてから
-          # 全件削除し、切り替え待ちの旧版でキャッシュが再充填されるのを防ぐ。
+          # 期待revisionへの切り替え後にキャッシュを削除し、旧版による再生成を防ぐ。
           purge_payload=$(jq -nc --arg domain "$WEBACCEL_SUBDOMAIN" \
             '{Site: {Domain: $domain}}')
           curl --fail-with-body --silent --show-error \
@@ -283,15 +266,13 @@ jobs:
 
           echo "Public URL: $WEBACCEL_URL" >> "$GITHUB_STEP_SUMMARY"
 
-      # mainへのpushごとにSHAタグが増え続け、Docker Hub無料枠(private 2GiB)を
-      # いずれ使い切る。新しい順にKEEP_TAGS件だけ残して残りを消す。
-      # 切り戻し(build=false)のときは走らせない。戻し先のタグを消しかねないため。
+      # 新しい本番タグをKEEP_TAGS件残す。切り戻し時は削除しない。
       - name: Prune old production image tags
         if: steps.vars.outputs.build == 'true'
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          # 切り戻し先として残す世代数
+          # 切り戻し用に保持する世代数。
           KEEP_TAGS: "10"
           IMAGE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
@@ -305,8 +286,7 @@ jobs:
 
           repo="${DOCKERHUB_USERNAME}/nuance-mapper"
 
-          # プレビュー用の pr-* はプレビュー側のワークフローが管理するので触らない。
-          # 今デプロイしたタグも、保持数の計算とは別に必ず除外する。
+          # pr-*と現在のデプロイタグは削除対象外にする。
           if ! tags=$(dockerhub_tags "$jwt" "$repo"); then
             echo "::warning::タグ一覧を取得できなかったので整理をスキップします"
             exit 0

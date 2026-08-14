@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 
-# AppRun共用型のシークレット環境変数を公式APIで同期する。
-#
-# Terraform provider v3.12.7 と apprun-cli v0.8.1 は、2026-06-25に追加された
-# components[].secret をまだ扱えない。通常のenvには版番号だけを残し、このスクリプトが
-# APIキー等をsecretへ移す。値そのものは標準出力へ出さない。
+# providerとapprun-cliが未対応のcomponents[].secretを公式APIで同期する。
+# secret値は標準出力へ表示しない。
 
 set -euo pipefail
 
@@ -20,8 +17,7 @@ APPRUN_API_ROOT="${APPRUN_API_ROOT:-https://secure.sakura.ad.jp/cloud/api/apprun
 
 defer_secret_sync() {
   echo "$1"
-  # pre-syncを延期した場合、deployが版番号だけを先に更新してもpost-syncが
-  # 古いsecret値を「同期済み」と誤認しないよう、後段へ強制同期フラグを渡す。
+  # 同期を延期した場合は、デプロイ後に強制同期する。
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "deferred=true" >> "$GITHUB_OUTPUT"
   fi
@@ -119,9 +115,7 @@ payload=$(jq -c \
         max_cpu: $component.max_cpu,
         max_memory: $component.max_memory,
         deploy_source: {
-          # action=keepでは保存済み資格情報を丸ごと再利用する。server/usernameを
-          # 同時に送ると、APIが「passwordなしの新規認証情報」と解釈して
-          # invalid Passwordを返すため、image以外は送らない。
+          # action=keepでserver/usernameを送るとinvalid Passwordになるため、imageだけを送る。
           container_registry: {
             image: $component.deploy_source.container_registry.image,
             action: "keep"
@@ -154,7 +148,7 @@ http_status=${response##*$'\n'}
 updated=${response%$'\n'*}
 if [[ ! "$http_status" =~ ^2 ]]; then
   echo "AppRun secret update failed with HTTP $http_status:" >&2
-  # APIエラーだけを出す。リクエストpayload（secret値）は絶対に表示しない。
+  # secret値を含むリクエストpayloadは表示しない。
   jq -c '.error // .' <<<"$updated" >&2 || echo "<non-JSON API error>" >&2
   exit 1
 fi

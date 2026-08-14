@@ -1,10 +1,7 @@
 name: Destroy Sakura AppRun
 
-# 手動起動のみ。誤爆防止のため confirm 入力に "destroy" と打たないと実行されない
-#
-# 本番アプリには prevent_destroy を設定してあるため、このワークフローはそのままでは
-# 失敗する。意図的に削除する場合は main.tf の lifecycle ブロックを外す変更を
-# main へ入れてから実行すること（terraform/apprun/README.md「リソースを削除する」）。
+# 意図しない削除を防ぐため、手動実行時に"destroy"の入力を要求する。
+# 実行前にprevent_destroyを外す手順はterraform/apprun/README.mdを参照する。
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +13,7 @@ on:
 permissions:
   contents: read
 
-# deploy-sakura.yml と同じ state を直列化する(グループ名を揃える)
+# deployとdestroyによる同一stateへの操作を直列化する。
 concurrency:
   group: sakura-apprun-terraform
   cancel-in-progress: false
