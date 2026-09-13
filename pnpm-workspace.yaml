@@ -2,7 +2,11 @@
 # overrides などの設定はこのファイルで管理する。
 # https://pnpm.io/settings
 overrides:
-  postcss@<8.5.10: '>=8.5.10'
+  postcss@<8.5.28: '>=8.5.28'
+  # nanoid は postcss の推移依存。v4 以降は ESM 専用で postcss が動かないため
+  # v3 系列に留めたまま修正版へ固定する。
+  nanoid@<3.3.18: '^3.3.18'
+  baseline-browser-mapping@<2.11.0: '>=2.11.0'
 
 # 依存パッケージのビルドスクリプトの許可設定（pnpm 11 で onlyBuiltDependencies /
 # ignoredBuiltDependencies から allowBuilds に統合された）。
