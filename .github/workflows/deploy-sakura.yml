@@ -100,16 +100,21 @@ jobs:
           echo "$DOCKERHUB_TOKEN" | docker login \
             -u "$DOCKERHUB_USERNAME" --password-stdin
 
+      - uses: docker/setup-buildx-action@v4
+        if: steps.vars.outputs.build == 'true'
+
       - name: Build and push image
         if: steps.vars.outputs.build == 'true'
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
-        run: |
-          IMAGE="docker.io/${DOCKERHUB_USERNAME}/nuance-mapper:${IMAGE_TAG}"
-          # /api/healthで稼働中のビルドを確認するため、revisionを埋め込む。
-          docker build --build-arg "BUILD_REVISION=${IMAGE_TAG}" -t "$IMAGE" .
-          docker push "$IMAGE"
+        uses: docker/build-push-action@v7
+        with:
+          build-args: BUILD_REVISION=${{ steps.vars.outputs.tag }}
+          # mainのpush/手動ビルドがcacheを保存し、previewは同じscopeを読む。
+          cache-from: type=gha,scope=nuance-mapper-linux-amd64
+          cache-to: type=gha,scope=nuance-mapper-linux-amd64,mode=max
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/nuance-mapper:${{ steps.vars.outputs.tag }}
 
       - name: Terraform apply
         working-directory: ${{ env.TF_WORKING_DIR }}

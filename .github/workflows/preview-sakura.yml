@@ -126,9 +126,10 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           build-args: BUILD_REVISION=${{ steps.names.outputs.revision }}
-          # mode=maxで中間ステージもGitHub Actions Cacheへ保存する。
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # pull_request_targetのruntime tokenはmainのcacheを読み取り専用で扱う。
+          # deploy-sakura.ymlが保存するcacheを再利用し、PRからは書き込まない。
+          # https://docs.docker.com/build/ci/github-actions/cache/#cache-write-restrictions
+          cache-from: type=gha,scope=nuance-mapper-linux-amd64
           context: ./preview-source
           platforms: linux/amd64
           push: true
