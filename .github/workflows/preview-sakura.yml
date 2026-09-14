@@ -126,9 +126,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           build-args: BUILD_REVISION=${{ steps.names.outputs.revision }}
-          # mode=maxで中間ステージもGitHub Actions Cacheへ保存する。
+          # 最終イメージのレイヤのみGitHub Actions Cacheへ保存する（既定のmode=min）。
+          # mode=maxは中間ステージも書き出すため、node_modulesを含むdepsステージまで
+          # 対象になりキャッシュ容量を使い切り、書き出しが
+          # "failed to reserve cache" で失敗していた。
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha
           context: ./preview-source
           platforms: linux/amd64
           push: true
