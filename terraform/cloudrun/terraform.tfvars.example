@@ -1,0 +1,39 @@
+# このファイルを terraform.tfvars にコピーして値を埋める:
+#   cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars は .gitignore 済み
+
+# 必須: デプロイ先のプロジェクト（請求先アカウントの紐付けが必要）
+project_id = "your-project-id"
+
+# Secret Managerへ格納する環境変数。使うものだけを残す。
+# 値はここに書かず、作成時とローテーション時に環境変数で渡す:
+#   export TF_VAR_gemini_api_key="..."
+secret_env_names = [
+  "GEMINI_API_KEY",
+  "GROQ_API_KEY",
+  "CEREBRAS_API_KEY",
+  "OPENROUTER_API_KEY",
+  "UPSTASH_REDIS_REST_URL",
+  "UPSTASH_REDIS_REST_TOKEN",
+]
+
+# 値を変えたら増やす。増やした時は secret_env_names の全部の値を渡す。
+# secret_version = "1"
+
+# 任意: アラートと予算通知の送信先
+# alert_email = "you@example.com"
+
+# 任意: 予算アラート（請求先アカウントの管理者権限が必要）
+# billing_account_id = "XXXXXX-XXXXXX-XXXXXX"
+# budget_amount      = 1000
+# budget_currency    = "JPY"
+
+# 任意
+# region              = "asia-northeast1"
+# cpu                 = "1"
+# memory              = "512Mi"
+# max_instances       = 1
+# concurrency         = 80
+# image_keep_count    = 3
+# uptime_check_period = "900s"
+# alert_5xx_threshold = 5

@@ -1,0 +1,115 @@
+name: Deploy to Google Cloud Run
+
+# terraform/cloudrun の構成へイメージを配る。本番の移行が済むまでは手動実行だけにしておく。
+# Cloud Runサービス、シークレット、監視はローカルからのterraform applyで管理し、
+# このワークフローはイメージのpushとリビジョンの更新だけを行う。
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Artifact Registryに残っているイメージのタグ。指定するとビルドせずそのイメージを配る（切り戻し用）。空ならコミットSHAでビルドする"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  # Workload Identity FederationでGitHubのOIDCトークンを取得するのに必要。
+  id-token: write
+
+concurrency:
+  group: gcp-cloudrun-deploy
+  cancel-in-progress: false
+
+env:
+  SERVICE: nuance-mapper
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Determine image
+        id: vars
+        # ユーザー入力はシェルへ直接展開せず、環境変数で渡す。
+        env:
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          if [ -n "$IMAGE_TAG_INPUT" ]; then
+            # 既存タグへの切り戻しでは新しいイメージをビルドしない。
+            tag="$IMAGE_TAG_INPUT"
+            echo "build=false"
+          else
+            tag="$GITHUB_SHA"
+            echo "build=true"
+          fi >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${SERVICE}/${SERVICE}:${tag}" >> "$GITHUB_OUTPUT"
+
+      # attribute_condition でmainブランチ以外からの認証は拒否される。
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        if: steps.vars.outputs.build == 'true'
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.vars.outputs.build == 'true'
+
+      - name: Build and push image
+        if: steps.vars.outputs.build == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          build-args: BUILD_REVISION=${{ steps.vars.outputs.tag }}
+          # Sakura向けのデプロイと同じscopeを使い、ビルドキャッシュを共有する。
+          cache-from: type=gha,scope=nuance-mapper-linux-amd64
+          cache-to: type=gha,scope=nuance-mapper-linux-amd64,mode=max
+          context: .
+          platforms: linux/amd64
+          # attestationのマニフェストを作らず、Artifact Registryのクリーンアップ対象を
+          # イメージ本体だけにする。
+          provenance: false
+          push: true
+          tags: ${{ steps.vars.outputs.image }}
+
+      # --image 以外の設定（シークレット、スケーリングなど）は既存のまま引き継がれる。
+      - name: Deploy new revision
+        env:
+          IMAGE: ${{ steps.vars.outputs.image }}
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --quiet
+
+      - name: Verify deployed revision
+        env:
+          EXPECTED_REVISION: ${{ steps.vars.outputs.tag }}
+        run: |
+          url=$(gcloud run services describe "$SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(status.url)')
+
+          # スケールゼロからの起動を待つため、数回まで再試行する。
+          revision=""
+          for attempt in $(seq 1 12); do
+            body=$(curl --fail --silent --show-error --max-time 30 \
+              "$url/api/health" || true)
+            revision=$(jq -r '.revision // empty' <<<"$body" 2>/dev/null || true)
+            [ "$revision" = "$EXPECTED_REVISION" ] && break
+            sleep 5
+          done
+          if [ "$revision" != "$EXPECTED_REVISION" ]; then
+            echo "::error::Cloud Run revision mismatch (expected=$EXPECTED_REVISION actual=${revision:-none})"
+            exit 1
+          fi
+
+          echo "Public URL: $url" >> "$GITHUB_STEP_SUMMARY"

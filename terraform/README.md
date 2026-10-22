@@ -69,3 +69,7 @@ terraform/
 - AppRun方式と仮想サーバ方式は別々のstateで管理されます。同じリソース名を使う場合も、意図せず両方を起動しないよう注意してください。
 
 具体的な手順は、[AppRun方式](./apprun/README.md)または[仮想サーバ方式](./server/README.md)を参照してください。
+
+## Google Cloud Run
+
+さくらのクラウドとは別に、GCPの無料枠で動かすための[`cloudrun/`](./cloudrun/)構成も用意しています。Cloud Run、Artifact Registry、Secret Manager、Workload Identity Federationに加えて、Cloud Monitoringのダッシュボード、外形監視、アラート、予算通知までを同じstateで管理します。手順は[Cloud Run方式](./cloudrun/README.md)を参照してください。

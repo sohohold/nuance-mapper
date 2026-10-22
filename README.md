@@ -43,7 +43,7 @@ APIは設定済みのプロバイダのみを候補にし、Gemini、Groq、Cere
 | バックエンド | Next.js Route Handlers、OpenAI互換API、SSE |
 | キャッシュ | Upstash Redis REST、メモリ／ローカルファイルへのフォールバック |
 | テスト・品質管理 | Vitest、Testing Library、Playwright、Biome、TypeScript |
-| インフラ | Docker、Terraform、さくらのクラウド AppRun／仮想サーバ、GitHub Actions |
+| インフラ | Docker、Terraform、さくらのクラウド AppRun／仮想サーバ、Google Cloud Run、GitHub Actions |
 
 ## セットアップ
 
@@ -104,8 +104,9 @@ src/
 e2e/                         # Playwright E2Eテスト
 terraform/
 ├── apprun/                  # AppRunとコンテナレジストリ
+├── cloudrun/                # Google Cloud Run、監視、予算
 └── server/                  # Ubuntu VMとsystemd
-.github/workflows/           # CI、AppRunのデプロイ／削除
+.github/workflows/           # CI、AppRun／Cloud Runのデプロイ、AppRunの削除
 ```
 
 ## 設計上のポイント
@@ -135,8 +136,9 @@ pnpm test:e2e
 
 ## デプロイ
 
-Next.jsの一般的な実行環境に加え、さくらのクラウド向けに2種類のTerraform構成を用意しています。
+Next.jsの一般的な実行環境に加え、さくらのクラウド向けに2種類、Google Cloud向けに1種類のTerraform構成を用意しています。
 
 - [さくらのクラウド構成の比較](./terraform/README.md)
 - [AppRunへのコンテナデプロイ](./terraform/apprun/README.md)
 - [Ubuntu仮想サーバへのデプロイ](./terraform/server/README.md)
+- [Google Cloud Runへのデプロイ（監視ダッシュボード付き）](./terraform/cloudrun/README.md)
