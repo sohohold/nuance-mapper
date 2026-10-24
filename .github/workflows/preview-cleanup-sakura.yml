@@ -21,7 +21,7 @@ env:
 
 jobs:
   destroy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # 閉じたPRのmerge refではなく、定義が存在するbase branchを取得する。
       - uses: actions/checkout@v6
