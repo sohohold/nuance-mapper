@@ -93,6 +93,13 @@ resource "google_secret_manager_secret_version" "app" {
   secret                 = each.value.id
   secret_data_wo         = local.secret_values[each.key]
   secret_data_wo_version = var.secret_version
+
+  # secret_data_wo_version の変更は置換になる。既定の「削除してから作成」では、
+  # 稼働中のリビジョンが参照する版が先に消え、その間の起動がシークレットを読めずに失敗する。
+  # 新しい版を作り、Cloud Runを新しいリビジョンへ切り替えてから古い版を消す。
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "google_secret_manager_secret_iam_member" "run" {
