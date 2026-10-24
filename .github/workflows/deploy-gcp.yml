@@ -21,7 +21,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SERVICE: nuance-mapper
+  # Artifact Registryのリポジトリ名とイメージ名もTerraformの service_name と同じ。
+  SERVICE: ${{ vars.GCP_SERVICE }}
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
 

@@ -130,6 +130,7 @@ terraform output github_variables
 | --- | --- |
 | `GCP_PROJECT_ID` | プロジェクトID |
 | `GCP_REGION` | リージョン（既定は`asia-northeast1`） |
+| `GCP_SERVICE` | Cloud Runサービス名（`service_name`、既定は`nuance-mapper`）。Artifact Registryのリポジトリ名とイメージ名も兼ねる |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Workload Identityプロバイダのリソース名 |
 | `GCP_DEPLOYER_SERVICE_ACCOUNT` | デプロイ用サービスアカウントのメールアドレス |
 
