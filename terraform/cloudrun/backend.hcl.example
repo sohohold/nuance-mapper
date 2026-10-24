@@ -1,0 +1,10 @@
+# このファイルを backend.hcl にコピーして使う:
+#   cp backend.hcl.example backend.hcl
+#   terraform init -backend-config=backend.hcl
+# backend.hcl は .gitignore 済み（bucket名は環境ごとに変わるためコミットしない）
+#
+# bucket は事前に一度だけ作成しておく必要がある（READMEの「初回設定」参照）。
+# Cloud Storageの無料枠はUSリージョン(us-central1 / us-east1 / us-west1)だけが対象。
+
+bucket = "your-unique-tfstate-bucket-name"
+prefix = "nuance-mapper/cloudrun"

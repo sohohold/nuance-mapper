@@ -7,3 +7,6 @@ terraform
 *.md
 .env*
 !.env.example
+# google-github-actions/auth がワークスペースに書き出す認証情報。
+# COPY . . でビルダーのレイヤーに入り、GitHub Actionsのキャッシュへ書き出されるのを防ぐ。
+gha-creds-*.json
