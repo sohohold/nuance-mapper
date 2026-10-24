@@ -66,15 +66,4 @@ resource "sakura_apprun_shared" "main" {
     version_index = 0
     percent       = 100
   }]
-
-  # 置換はアプリの削除と再作成であり、公開URLが変わる。mainへのmergeで無人の
-  # applyが走る構成なので、置換が必要になった時点で気付けないと本番が消える。
-  # 実際にコントロールパネルからの編集がコンポーネント名を書き換え、それを
-  # 差分と見たTerraformがアプリを破棄した。
-  #
-  # 意図的に作り直す場合はこのブロックを外してから apply すること。
-  # `terraform destroy` も同様に、外さないと失敗する。
-  lifecycle {
-    prevent_destroy = true
-  }
 }
