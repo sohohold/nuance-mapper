@@ -470,8 +470,6 @@ resource "google_monitoring_dashboard" "main" {
                   thresholds = [for t in c.thresholds : {
                     value      = t.value
                     label      = t.label
-                    color      = "YELLOW"
-                    direction  = "ABOVE"
                     targetAxis = "Y1"
                   }]
                 } : k => v if length(v) > 0
