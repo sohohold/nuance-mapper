@@ -4,6 +4,7 @@ name: Destroy Preview on Sakura AppRun
 # PRイベントでの自動実行は停止中。再開するときは下記のトリガーを戻す。
 #   pull_request:
 #     types: [closed]
+# onは省略できないためworkflow_dispatchを置くが、PRの情報がない手動実行ではjobを起動しない。
 on:
   workflow_dispatch:
 
@@ -23,6 +24,7 @@ env:
 
 jobs:
   destroy:
+    if: github.event.pull_request
     runs-on: ubuntu-24.04
     steps:
       # 閉じたPRのmerge refではなく、定義が存在するbase branchを取得する。

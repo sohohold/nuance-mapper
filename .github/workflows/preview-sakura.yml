@@ -4,6 +4,7 @@ name: Deploy Preview to Sakura AppRun
 # PRイベントでの自動実行は停止中。再開するときは下記のトリガーを戻す。
 #   pull_request_target:
 #     types: [opened, synchronize, reopened, ready_for_review]
+# onは省略できないためworkflow_dispatchを置くが、PRの情報がない手動実行ではjobの条件を満たさない。
 # workflowはbase branch版を使い、PRコードは資格情報なしのbuild contextに限定する。
 on:
   workflow_dispatch:
