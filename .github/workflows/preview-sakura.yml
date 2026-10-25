@@ -1,10 +1,12 @@
 name: Deploy Preview to Sakura AppRun
 
 # 同一リポジトリのPRごとにプレビューを作成する。同時作成数は最大4件。
+# PRイベントでの自動実行は停止中。再開するときは下記のトリガーを戻す。
+#   pull_request_target:
+#     types: [opened, synchronize, reopened, ready_for_review]
+# workflowはbase branch版を使い、PRコードは資格情報なしのbuild contextに限定する。
 on:
-  # workflowはbase branch版を使い、PRコードは資格情報なしのbuild contextに限定する。
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read

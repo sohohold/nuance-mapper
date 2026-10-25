@@ -1,9 +1,11 @@
 name: Destroy Preview on Sakura AppRun
 
 # PRを閉じたときにAppRunアプリとイメージタグを削除する。
+# PRイベントでの自動実行は停止中。再開するときは下記のトリガーを戻す。
+#   pull_request:
+#     types: [closed]
 on:
-  pull_request:
-    types: [closed]
+  workflow_dispatch:
 
 permissions:
   contents: read

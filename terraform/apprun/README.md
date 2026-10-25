@@ -20,7 +20,7 @@ flowchart LR
 
 ## 特徴
 
-- `main`へのpush（PRのmerge）で自動デプロイ。手動実行でのタグ指定・切り戻しも可能
+- `main`へのpush（PRのmerge）で自動デプロイ（現在は停止中で、手動実行のみ）。手動実行でのタグ指定・切り戻しも可能
 - コミットSHAまたは指定値を使ったイメージタグ管理
 - コンテナレジストリはDocker Hub（さくらのコンテナレジストリの月額が不要）
 - `min_scale = 0`によるアイドル時のスケールゼロ
@@ -116,7 +116,7 @@ Docker Hubの組織アカウントを使う場合は、名前空間がユーザ�
 
 ## GitHub Actionsからデプロイする
 
-`main`ブランチへのpush（PRのmergeを含む）で`Deploy to Sakura AppRun`が自動実行されます。イメージタグにはコミットSHAが使われます。
+`main`ブランチへのpush（PRのmergeを含む）で`Deploy to Sakura AppRun`が自動実行されます。イメージタグにはコミットSHAが使われます。現在は自動実行を停止しており、手動実行のみ受け付けます。再開するには`on:`へ`push: branches: [main]`を戻してください。
 
 以前のイメージへ切り戻す場合は手動で起動します。
 
