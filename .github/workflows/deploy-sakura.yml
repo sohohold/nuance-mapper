@@ -1,9 +1,7 @@
 name: Deploy to Sakura AppRun
 
-# mainへのpushで自動デプロイし、手動実行では既存タグへの切り戻しに対応する。
+# 自動デプロイは停止中。手動実行では既存タグへの切り戻しに対応する。
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:

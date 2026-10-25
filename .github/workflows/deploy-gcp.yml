@@ -1,9 +1,12 @@
 name: Deploy to Google Cloud Run
 
-# terraform/cloudrun の構成へイメージを配る。本番の移行が済むまでは手動実行だけにしておく。
+# terraform/cloudrun の構成へイメージを配る。mainへのpushで自動デプロイし、
+# 手動実行では既存タグへの切り戻しに対応する。
 # Cloud Runサービス、シークレット、監視はローカルからのterraform applyで管理し、
 # このワークフローはイメージのpushとリビジョンの更新だけを行う。
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:

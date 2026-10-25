@@ -136,14 +136,14 @@ terraform output github_variables
 
 ## GitHub Actionsからデプロイする
 
+`main`ブランチへのpush（PRのmergeを含む）で`Deploy to Google Cloud Run`が自動実行されます。手動で実行する場合は次の手順です。
+
 1. 「Actions」タブで`Deploy to Google Cloud Run`を選択します。
 2. `main`ブランチを選んで`Run workflow`を実行します。
 
 イメージタグにはコミットSHAが使われ、デプロイ後に`/api/health`の`revision`が一致するまで確認します。Workload Identityの条件で`main`以外のブランチからの認証は拒否されます。
 
 以前のイメージへ切り戻す場合は、`image_tag`にタグを入力して実行します。タグを指定するとビルドを行わず、Artifact Registryに残っているイメージをそのまま配ります。切り戻せるのは直近`image_keep_count`件（既定は3件）までです。
-
-本番をCloud Runへ移す場合は、ワークフローの`on`に`push: branches: [main]`を追加すると、mainへのmergeで自動デプロイされます。
 
 ## 監視
 
